@@ -34,7 +34,7 @@ jobs:
            run: |
               apk update
               apk add --no-cache \
-                 curl bash git build-base \
+                 curl bash ca-certificates git build-base \
                  musl-dev gcc g++ \
                  rust cargo \
                  zig \
@@ -44,8 +44,10 @@ jobs:
          - name: Install bun
            shell: sh
            run: |
+              export BUN_INSTALL=/root/.bun
+              mkdir -p "$BUN_INSTALL"
               curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
-              ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+              ln -sf "$BUN_INSTALL/bin/bun" /usr/local/bin/bun
               bun --version
 
          - name: Add musl Rust target
@@ -112,14 +114,15 @@ jobs:
               cp \
                 "crates/pi-natives/target/$RUST_TARGET/release/libpi_natives.so" \
                 "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
+              echo "=== Verify musl linkage ==="
               readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node | grep -i musl || \
                 echo "WARNING: addon may not be musl-linked"
               file packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node
 
-         - name: Generate tool views & docs index
+         - name: Generate docs index
            shell: sh
            run: |
-              bun --cwd=packages/coding-agent run generate-docs-index 2>/dev/null || true
+              bun --cwd=packages/coding-agent run generate-docs-index 2>&1 || true
 
          - name: Build omp binary (musl)
            shell: sh
