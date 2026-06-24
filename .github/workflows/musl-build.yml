@@ -64,14 +64,8 @@ jobs:
               curl -fL "$BUN_URL" -o /tmp/bun.zip
               unzip -q /tmp/bun.zip -d /tmp/bun
 
-              BUN_BIN="$(find /tmp/bun -type f -name bun | head -n 1)"
-              if [ -z "${BUN_BIN}" ]; then
-                 echo "bun binary not found after unzip" >&2
-                 exit 1
-              fi
-
-              install -m 755 "$BUN_BIN" /usr/local/bin/bun
-              bun --version
+              install -m 755 "/tmp/bun/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun
+              /usr/local/bin/bun --version
 
          - name: Add musl Rust target
            shell: sh
