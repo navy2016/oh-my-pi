@@ -32,40 +32,23 @@ jobs:
               set -eu
               apk update
               apk add --no-cache \
-                 curl bash ca-certificates git build-base \
+                 bash ca-certificates git build-base \
                  musl-dev gcc g++ \
                  rust cargo \
                  zig \
                  openssl-dev openssl-libs-static \
-                 cmake pkgconfig unzip
+                 cmake pkgconfig unzip curl
 
-         - name: Install bun
+         - name: Setup bun
+           uses: oven-sh/setup-bun@v2
+           with:
+              bun-version: 1.3.14
+
+         - name: Verify bun
            shell: sh
            run: |
               set -eu
-
-              BUN_VERSION="1.3.14"
-              case "$(uname -m)" in
-                 x86_64)
-                    BUN_ARCH="x64"
-                    ;;
-                 aarch64)
-                    BUN_ARCH="aarch64"
-                    ;;
-                 *)
-                    echo "Unsupported arch: $(uname -m)" >&2
-                    exit 1
-                    ;;
-              esac
-
-              BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip"
-              echo "Downloading bun from: $BUN_URL"
-
-              curl -fL "$BUN_URL" -o /tmp/bun.zip
-              unzip -q /tmp/bun.zip -d /tmp/bun
-
-              install -m 755 "/tmp/bun/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun
-              /usr/local/bin/bun --version
+              bun --version
 
          - name: Add musl Rust target
            shell: sh
