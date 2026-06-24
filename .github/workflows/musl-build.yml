@@ -1,0 +1,160 @@
+name: Build musl (Alpine) binary
+
+on:
+   workflow_dispatch:
+      inputs:
+         arch:
+            description: Target architecture
+            type: choice
+            options:
+               - x86_64
+               - aarch64
+            default: x86_64
+         ref:
+            description: Git ref to build (branch, tag, or commit SHA)
+            type: string
+            default: main
+
+env:
+   BUN_VERSION: "1.3"
+
+permissions:
+   contents: read
+
+jobs:
+   build_musl:
+      name: Build omp for linux-${{ inputs.arch }}-musl
+      runs-on: ubuntu-22.04
+      container:
+         image: alpine:3.21
+         options: --user root
+      steps:
+         - name: Install system dependencies
+           shell: sh
+           run: |
+              apk update
+              apk add --no-cache \
+                 curl bash git build-base \
+                 musl-dev gcc g++ \
+                 rust cargo \
+                 zig \
+                 openssl-dev openssl-libs-static \
+                 cmake pkgconfig
+
+         - name: Install bun
+           shell: sh
+           run: |
+              curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
+              ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+              bun --version
+
+         - name: Add musl Rust target
+           shell: sh
+           run: |
+              TARGET_ARCH="${{ inputs.arch }}"
+              if [ "$TARGET_ARCH" = "x86_64" ]; then
+                rustup target add x86_64-unknown-linux-musl
+              else
+                rustup target add aarch64-unknown-linux-musl
+              fi
+
+         - name: Checkout code
+           uses: actions/checkout@v4
+           with:
+              ref: ${{ inputs.ref }}
+              fetch-depth: 1
+
+         - name: Cache cargo registry
+           uses: actions/cache@v4
+           with:
+              path: |
+                 /root/.cargo/registry
+                 /root/.cargo/git
+              key: musl-cargo-${{ hashFiles('Cargo.lock') }}
+              restore-keys: musl-cargo-
+
+         - name: Cache bun dependencies
+           uses: actions/cache@v4
+           with:
+              path: /root/.bun/install/cache
+              key: musl-bun-${{ hashFiles('bun.lock') }}
+              restore-keys: musl-bun-
+
+         - name: Install JS dependencies
+           shell: sh
+           run: bun install --frozen-lockfile --ignore-scripts
+
+         - name: Infer build arch from container
+           shell: sh
+           id: infer-arch
+           run: |
+              ARCH=$(uname -m)
+              if [ "$ARCH" = "x86_64" ]; then
+                echo "arch=x64" >> $GITHUB_OUTPUT
+                echo "rust_triple=x86_64-unknown-linux-musl" >> $GITHUB_OUTPUT
+              else
+                echo "arch=arm64" >> $GITHUB_OUTPUT
+                echo "rust_triple=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
+              fi
+              echo "host_arch=$ARCH" >> $GITHUB_OUTPUT
+
+         - name: Build pi_natives native addon (musl)
+           shell: sh
+           env:
+              RUST_TARGET: ${{ steps.infer-arch.outputs.rust_triple }}
+              TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
+           run: |
+              echo "Building pi_natives for $RUST_TARGET..."
+              cd crates/pi-natives
+              cargo build --release --target "$RUST_TARGET"
+              cd ../..
+              mkdir -p packages/natives/native
+              cp \
+                "crates/pi-natives/target/$RUST_TARGET/release/libpi_natives.so" \
+                "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
+              readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node | grep -i musl || \
+                echo "WARNING: addon may not be musl-linked"
+              file packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node
+
+         - name: Generate tool views & docs index
+           shell: sh
+           run: |
+              bun --cwd=packages/coding-agent run generate-docs-index 2>/dev/null || true
+
+         - name: Build omp binary (musl)
+           shell: sh
+           env:
+              TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
+           run: |
+              MUSL_TARGET="bun-linux-${TARGET_ARCH}-musl"
+              echo "Building omp for target: $MUSL_TARGET"
+              bun build \
+                 --compile \
+                 --target "$MUSL_TARGET" \
+                 --no-compile-autoload-bunfig \
+                 --no-compile-autoload-dotenv \
+                 --no-compile-autoload-tsconfig \
+                 --no-compile-autoload-package-json \
+                 --keep-names \
+                 --define "process.env.PI_COMPILED=true" \
+                 --external fastembed \
+                 --external onnxruntime-node \
+                 --root . \
+                 ./packages/coding-agent/src/cli.ts \
+                 --outfile "omp-linux-${TARGET_ARCH}-musl"
+
+         - name: Smoke test binary
+           shell: sh
+           run: |
+              TARGET_ARCH="${{ steps.infer-arch.outputs.arch }}"
+              chmod +x "omp-linux-${TARGET_ARCH}-musl"
+              runtime_dir="$(mktemp -d)"
+              HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" \
+                "./omp-linux-${TARGET_ARCH}-musl" --version
+
+         - name: Upload musl binary
+           uses: actions/upload-artifact@v4
+           with:
+              name: omp-linux-${{ steps.infer-arch.outputs.arch }}-musl
+              path: omp-linux-*-musl
+              retention-days: 90
