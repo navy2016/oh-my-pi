@@ -21,7 +21,7 @@ permissions:
 jobs:
    build_musl:
       name: Build omp for linux-${{ inputs.arch }}-musl
-      runs-on: ${{ inputs.arch == "aarch64" && "ubuntu-24.04-arm" || "ubuntu-22.04" }}
+      runs-on: ${{ inputs.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-22.04' }}
       container:
          image: alpine:3.21
          options: --user root
