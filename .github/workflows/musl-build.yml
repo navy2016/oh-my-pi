@@ -40,8 +40,8 @@ jobs:
                  aarch64) BUN_ARCH="aarch64" ;;
                  *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
               esac
-              BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}-musl.zip"
-              echo "Downloading bun (musl) from: $BUN_URL"
+              BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip"
+              echo "Downloading bun from: $BUN_URL"
               curl -fL "$BUN_URL" -o bun.zip
               unzip -q bun.zip -d bun-extract
               BUN_BIN="$(find bun-extract -type f -name bun | head -n 1)"
