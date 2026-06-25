@@ -126,6 +126,16 @@ jobs:
               readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node                 | grep -i musl || echo "WARNING: addon may not be musl-linked"
               file packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node
 
+         - name: Embed native addon
+           shell: bash
+           env:
+              TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
+           run: |
+              set -eu
+              cd packages/natives
+              TARGET_PLATFORM=linux TARGET_ARCH=${TARGET_ARCH} bun scripts/embed-native.ts
+              cat native/embedded-addon.js | head -20
+
          - name: Run prepack (generate docs, tool-views, bundle dist)
            shell: bash
            continue-on-error: true
