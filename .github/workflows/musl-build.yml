@@ -34,7 +34,6 @@ jobs:
               apk add --no-cache \
                  bash ca-certificates git build-base \
                  musl-dev gcc g++ \
-                 rust cargo \
                  zig \
                  openssl-dev openssl-libs-static \
                  cmake pkgconfig unzip curl nodejs
@@ -67,7 +66,7 @@ jobs:
               install -m 755 "$BUN_BIN" /usr/local/bin/bun
               bun --version
 
-         - name: Verify musl Rust target
+         - name: Setup Rust toolchain (nightly + musl target)
            shell: sh
            run: |
               set -eu
@@ -77,12 +76,16 @@ jobs:
               else
                 TARGET="aarch64-unknown-linux-musl"
               fi
-              # On Alpine, system rust (from apk) is already musl-native;
-              # the host target std library is installed by default.
-              # rustup is NOT available with apk rust, so we just verify.
-              echo "Checking rust target: $TARGET"
+
+              # System rust from apk is too old (1.83 -- no edition2024).
+              # Install via rustup-init instead.
+              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y                 --default-toolchain nightly-2026-04-29                 --profile minimal                 --target "$TARGET"
+
+              source "$HOME/.cargo/env"
+              echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+              rustc --version
+              cargo --version
               rustc --print target-libdir --target "$TARGET"
-              echo "OK -- $TARGET is available"
 
          - name: Checkout code
            uses: actions/checkout@v4
