@@ -21,7 +21,7 @@ permissions:
 jobs:
    build_musl:
       name: Build omp for linux-${{ inputs.arch }}-musl
-      runs-on: ubuntu-22.04
+      runs-on: ${{ inputs.arch == "aarch64" && "ubuntu-24.04-arm" || "ubuntu-22.04" }}
       container:
          image: alpine:3.21
          options: --user root
@@ -70,12 +70,11 @@ jobs:
            shell: sh
            run: |
               set -eu
-              TARGET_ARCH="${{ inputs.arch }}"
-              if [ "$TARGET_ARCH" = "x86_64" ]; then
-                TARGET="x86_64-unknown-linux-musl"
-              else
-                TARGET="aarch64-unknown-linux-musl"
-              fi
+              case "$(uname -m)" in
+                 x86_64)  TARGET="x86_64-unknown-linux-musl" ;;
+                 aarch64) TARGET="aarch64-unknown-linux-musl" ;;
+                 *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
+              esac
 
               # System rust from apk is too old (1.83 -- no edition2024).
               # Install via rustup-init instead.
@@ -135,6 +134,7 @@ jobs:
            env:
               RUST_TARGET: ${{ steps.infer-arch.outputs.rust_triple }}
               TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
+              RUSTFLAGS: "-C target-feature=-crt-static"
            run: |
               set -eu
               echo "Building pi_natives for $RUST_TARGET..."
