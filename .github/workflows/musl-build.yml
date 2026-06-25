@@ -108,11 +108,14 @@ jobs:
            env:
               RUST_TARGET: ${{ steps.infer-arch.outputs.rust_triple }}
               TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
-              RUSTFLAGS: "-C target-feature=-crt-static"
-              CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
            run: |
               set -eu
+              # musl-gcc can't find libgcc_s.so by default; locate it via gcc.
+              GCC_LIB_DIR="$(dirname "$(gcc -print-file-name=libgcc_s.so.1)")"
+              echo "libgcc_s dir: $GCC_LIB_DIR"
+              export RUSTFLAGS="-C target-feature=-crt-static -C link-arg=-L${GCC_LIB_DIR}"
+              export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
               echo "Building pi_natives for $RUST_TARGET..."
               cd crates/pi-natives
               cargo build --release --target "$RUST_TARGET"
