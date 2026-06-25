@@ -22,24 +22,16 @@ jobs:
    build_musl:
       name: Build omp for linux-${{ inputs.arch }}-musl
       runs-on: ${{ inputs.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-22.04' }}
-      container:
-         image: alpine:3.21
-         options: --user root
       steps:
          - name: Install system dependencies
-           shell: sh
+           shell: bash
            run: |
               set -eu
-              apk update
-              apk add --no-cache \
-                 bash ca-certificates git build-base \
-                 musl-dev gcc g++ \
-                 zig \
-                 openssl-dev openssl-libs-static \
-                 cmake pkgconfig unzip curl nodejs
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends                  build-essential gcc g++                  musl-tools musl                  cmake pkg-config unzip curl                  libssl-dev openssl
 
          - name: Setup bun (musl)
-           shell: sh
+           shell: bash
            run: |
               set -eu
               BUN_VERSION="1.3.14"
@@ -48,26 +40,17 @@ jobs:
                  aarch64) BUN_ARCH="aarch64" ;;
                  *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
               esac
-
-              # Alpine uses musl libc -- must download the musl bun binary,
-              # NOT the default glibc one that oven-sh/setup-bun would fetch.
               BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}-musl.zip"
               echo "Downloading bun (musl) from: $BUN_URL"
-
               curl -fL "$BUN_URL" -o bun.zip
               unzip -q bun.zip -d bun-extract
-
               BUN_BIN="$(find bun-extract -type f -name bun | head -n 1)"
-              if [ -z "${BUN_BIN}" ]; then
-                 echo "bun binary not found after unzip" >&2
-                 exit 1
-              fi
-
-              install -m 755 "$BUN_BIN" /usr/local/bin/bun
+              [ -z "$BUN_BIN" ] && { echo "bun binary not found" >&2; exit 1; }
+              sudo install -m 755 "$BUN_BIN" /usr/local/bin/bun
               bun --version
 
          - name: Setup Rust toolchain (nightly + musl target)
-           shell: sh
+           shell: bash
            run: |
               set -eu
               case "$(uname -m)" in
@@ -75,16 +58,11 @@ jobs:
                  aarch64) TARGET="aarch64-unknown-linux-musl" ;;
                  *) echo "Unsupported arch: $(uname -m)" >&2; exit 1 ;;
               esac
-
-              # System rust from apk is too old (1.83 -- no edition2024).
-              # Install via rustup-init instead.
-              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y                 --default-toolchain nightly-2026-04-29                 --profile minimal                 --target "$TARGET"
-
+              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs                 | sh -s -- -y --default-toolchain nightly-2026-04-29                     --profile minimal --target "$TARGET"
               source "$HOME/.cargo/env"
               echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
               rustc --version
               cargo --version
-              rustc --print target-libdir --target "$TARGET"
 
          - name: Checkout code
            uses: actions/checkout@v4
@@ -96,29 +74,26 @@ jobs:
            uses: actions/cache@v4
            with:
               path: |
-                 /root/.cargo/registry
-                 /root/.cargo/git
-              key: musl-cargo-${{ hashFiles('Cargo.lock') }}
+                 ~/.cargo/registry
+                 ~/.cargo/git
+              key: musl-cargo-${{ hashFiles("Cargo.lock") }}
               restore-keys: musl-cargo-
 
          - name: Cache bun dependencies
            uses: actions/cache@v4
            with:
-              path: /root/.bun/install/cache
-              key: musl-bun-${{ hashFiles('bun.lock') }}
+              path: ~/.bun/install/cache
+              key: musl-bun-${{ hashFiles("bun.lock") }}
               restore-keys: musl-bun-
 
          - name: Install JS dependencies
-           shell: sh
-           run: |
-              set -eu
-              bun install --frozen-lockfile --ignore-scripts
+           shell: bash
+           run: bun install --frozen-lockfile --ignore-scripts
 
-         - name: Infer build arch from container
-           shell: sh
+         - name: Infer build arch
+           shell: bash
            id: infer-arch
            run: |
-              set -eu
               ARCH=$(uname -m)
               if [ "$ARCH" = "x86_64" ]; then
                 echo "arch=x64" >> $GITHUB_OUTPUT
@@ -127,14 +102,15 @@ jobs:
                 echo "arch=arm64" >> $GITHUB_OUTPUT
                 echo "rust_triple=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
               fi
-              echo "host_arch=$ARCH" >> $GITHUB_OUTPUT
 
          - name: Build pi_natives native addon (musl)
-           shell: sh
+           shell: bash
            env:
               RUST_TARGET: ${{ steps.infer-arch.outputs.rust_triple }}
               TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
               RUSTFLAGS: "-C target-feature=-crt-static"
+              CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
            run: |
               set -eu
               echo "Building pi_natives for $RUST_TARGET..."
@@ -142,52 +118,33 @@ jobs:
               cargo build --release --target "$RUST_TARGET"
               cd ../..
               mkdir -p packages/natives/native
-              cp \
-                "crates/pi-natives/target/$RUST_TARGET/release/libpi_natives.so" \
-                "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
+              cp                 "crates/pi-natives/target/$RUST_TARGET/release/libpi_natives.so"                 "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
               echo "=== Verify musl linkage ==="
-              readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node | grep -i musl || \
-                echo "WARNING: addon may not be musl-linked"
+              readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node                 | grep -i musl || echo "WARNING: addon may not be musl-linked"
               file packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node
 
          - name: Generate docs index
-           shell: sh
-           run: |
-              set -eu
-              bun --cwd=packages/coding-agent run generate-docs-index 2>&1 || true
+           shell: bash
+           run: bun --cwd=packages/coding-agent run generate-docs-index 2>&1 || true
 
          - name: Build omp binary (musl)
-           shell: sh
+           shell: bash
            env:
               TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
            run: |
               set -eu
               MUSL_TARGET="bun-linux-${TARGET_ARCH}-musl"
               echo "Building omp for target: $MUSL_TARGET"
-              bun build \
-                 --compile \
-                 --target "$MUSL_TARGET" \
-                 --no-compile-autoload-bunfig \
-                 --no-compile-autoload-dotenv \
-                 --no-compile-autoload-tsconfig \
-                 --no-compile-autoload-package-json \
-                 --keep-names \
-                 --define "process.env.PI_COMPILED=true" \
-                 --external fastembed \
-                 --external onnxruntime-node \
-                 --root . \
-                 ./packages/coding-agent/src/cli.ts \
-                 --outfile "omp-linux-${TARGET_ARCH}-musl"
+              bun build                  --compile                  --target "$MUSL_TARGET"                  --no-compile-autoload-bunfig                  --no-compile-autoload-dotenv                  --no-compile-autoload-tsconfig                  --no-compile-autoload-package-json                  --keep-names                  --define "process.env.PI_COMPILED=true"                  --external fastembed                  --external onnxruntime-node                  --root .                  ./packages/coding-agent/src/cli.ts                  --outfile "omp-linux-${TARGET_ARCH}-musl"
 
          - name: Smoke test binary
-           shell: sh
+           shell: bash
            run: |
               set -eu
               TARGET_ARCH="${{ steps.infer-arch.outputs.arch }}"
               chmod +x "omp-linux-${TARGET_ARCH}-musl"
               runtime_dir="$(mktemp -d)"
-              HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg" \
-                "./omp-linux-${TARGET_ARCH}-musl" --version
+              HOME="$runtime_dir/home" XDG_DATA_HOME="$runtime_dir/xdg"                 "./omp-linux-${TARGET_ARCH}-musl" --version
 
          - name: Upload musl binary
            uses: actions/upload-artifact@v4
