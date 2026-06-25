@@ -121,7 +121,7 @@ jobs:
               cargo build --release --target "$RUST_TARGET"
               cd ../..
               mkdir -p packages/natives/native
-              cp                 "crates/pi-natives/target/$RUST_TARGET/release/libpi_natives.so"                 "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
+              cp                 "target/$RUST_TARGET/release/libpi_natives.so"                 "packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node"
               echo "=== Verify musl linkage ==="
               readelf -d packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node                 | grep -i musl || echo "WARNING: addon may not be musl-linked"
               file packages/natives/native/pi_natives.linux-${TARGET_ARCH}.node
