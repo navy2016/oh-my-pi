@@ -76,14 +76,14 @@ jobs:
               path: |
                  ~/.cargo/registry
                  ~/.cargo/git
-              key: musl-cargo-${{ hashFiles("Cargo.lock") }}
+              key: musl-cargo-${{ hashFiles('Cargo.lock') }}
               restore-keys: musl-cargo-
 
          - name: Cache bun dependencies
            uses: actions/cache@v4
            with:
               path: ~/.bun/install/cache
-              key: musl-bun-${{ hashFiles("bun.lock") }}
+              key: musl-bun-${{ hashFiles('bun.lock') }}
               restore-keys: musl-bun-
 
          - name: Install JS dependencies
