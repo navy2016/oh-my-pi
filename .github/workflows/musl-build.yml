@@ -142,9 +142,9 @@ jobs:
            run: |
               set -eu
               cd packages/coding-agent
-              bun scripts/generate-docs-index.ts --generate
-              bun --cwd=../collab-web run build:tool-views
-              bun scripts/bundle-dist.ts
+              bun run gen:docs
+              bun run gen:tool-views
+              bun run gen:bundle
 
          - name: Build omp binary (musl)
            shell: bash
