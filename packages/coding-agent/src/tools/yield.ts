@@ -91,9 +91,51 @@ function isYieldType(value: unknown): value is string | string[] {
 }
 
 function parseYieldType(value: unknown): string | string[] | undefined {
-	if (value === undefined) return undefined;
+	// Strict-mode providers (OpenAI/Codex) make the optional `type` property
+	// required+nullable, so an untyped final yield arrives as `type: null`.
+	if (value === undefined || value === null) return undefined;
 	if (isYieldType(value)) return value;
 	throw new Error("type must be a string or non-empty array of strings");
+}
+
+/**
+ * Expand a plain-object `data` schema into a strict union that ALSO accepts each
+ * top-level section value (and array element) on its own. Agents that yield
+ * incrementally (`type: ["findings"]`, `type: ["confidence"]`, …) submit one
+ * section per call, so `data` is a single finding object or a lone verdict value
+ * — never the full output object. Without this, strict-mode providers constrain
+ * `data` to the whole schema and reject/—under constrained decoding—forbid the
+ * partial. Every branch is a typed sub-schema, so strict representability holds;
+ * the full-output object stays the first (terminal) branch. The assembled whole
+ * is still validated against the full schema at finalization. Non-object / loose
+ * schemas are returned unchanged.
+ */
+function withSectionVariants(dataSchema: Record<string, unknown>): Record<string, unknown> {
+	if (dataSchema.type !== "object") return dataSchema;
+	const props = dataSchema.properties;
+	if (props === null || typeof props !== "object") return dataSchema;
+	const propRecord = props as Record<string, unknown>;
+	const { description, ...fullWithoutDescription } = dataSchema;
+	const branches: unknown[] = [];
+	const seen = new Set<string>();
+	const add = (schema: unknown): void => {
+		if (schema === null || typeof schema !== "object") return;
+		const key = JSON.stringify(schema);
+		if (seen.has(key)) return;
+		seen.add(key);
+		branches.push(schema);
+	};
+	add(fullWithoutDescription);
+	for (const name in propRecord) {
+		const prop = propRecord[name];
+		add(prop);
+		if (prop !== null && typeof prop === "object") {
+			const propObj = prop as Record<string, unknown>;
+			if (propObj.type === "array") add(propObj.items);
+		}
+	}
+	if (branches.length <= 1) return dataSchema;
+	return description !== undefined ? { description, anyOf: branches } : { anyOf: branches };
 }
 
 function wrapYieldParameters(dataSchema: Record<string, unknown>): Record<string, unknown> {
@@ -119,6 +161,10 @@ function wrapYieldParameters(dataSchema: Record<string, unknown>): Record<string
 		properties: {},
 		required: [],
 	};
+	// The "an empty `result` (last-turn) requires a `type`" invariant is enforced
+	// in `execute()` at runtime, NOT in this schema: a top-level combinator
+	// (`allOf`/`anyOf`/`oneOf`/...) makes OpenAI/Codex Responses reject the whole
+	// tool with `invalid_function_parameters`, so the wrapper stays a plain object.
 	return {
 		type: "object",
 		additionalProperties: false,
@@ -130,26 +176,6 @@ function wrapYieldParameters(dataSchema: Record<string, unknown>): Record<string
 			},
 		},
 		required: ["result"],
-		allOf: [
-			{
-				anyOf: [
-					{
-						type: "object",
-						properties: { type: yieldTypeSchema },
-						required: ["type"],
-					},
-					{
-						type: "object",
-						properties: {
-							result: {
-								anyOf: [successResultSchema, errorResultSchema],
-							},
-						},
-						required: ["result"],
-					},
-				],
-			},
-		],
 	};
 }
 
@@ -220,7 +246,7 @@ export class YieldTool implements AgentTool<TSchema, YieldDetails> {
 				if (hasUnresolvedRefs(resolved)) {
 					throw new Error("schema contains unresolved $ref after dereferencing");
 				}
-				dataSchema = resolved;
+				dataSchema = withSectionVariants(resolved);
 			} else {
 				this.strict = false;
 				dataSchema = looseRecordSchema(
@@ -261,6 +287,10 @@ export class YieldTool implements AgentTool<TSchema, YieldDetails> {
 		const yieldType = parseYieldType(raw.type);
 		const useLastTurn =
 			errorMessage === undefined && data === undefined && yieldType !== undefined && !("error" in resultRecord);
+		// Incremental array-typed sections carry partial data (one finding, one
+		// field) that cannot satisfy the full output schema; the assembled result
+		// is validated as a whole at finalization (executor finalizeSubprocessOutput).
+		const isIncremental = Array.isArray(yieldType) && yieldType.length > 0;
 
 		if (errorMessage !== undefined && data !== undefined) {
 			throw new Error("result cannot contain both data and error");
@@ -277,7 +307,7 @@ export class YieldTool implements AgentTool<TSchema, YieldDetails> {
 			if (data === null) {
 				throw new Error("data is required when yield indicates success");
 			}
-			if (this.#validate) {
+			if (this.#validate && !isIncremental) {
 				const parsed = this.#validate(data);
 				if (!parsed.success) {
 					this.#schemaValidationFailures++;

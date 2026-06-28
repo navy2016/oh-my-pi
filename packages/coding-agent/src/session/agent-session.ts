@@ -2340,7 +2340,17 @@ export class AgentSession {
 			} satisfies SessionMessageEntry;
 		});
 
-		const preparation = prepareCompaction(pathEntries, compactionSettings);
+		const availableModels = this.#modelRegistry.getAvailable();
+		const candidates = this.#resolveCompactionModelCandidates(advisorModel, availableModels);
+		if (candidates.length === 0) {
+			// No compaction candidates, fallback to re-prime
+			return true;
+		}
+		const preparation = prepareCompaction(
+			pathEntries,
+			compactionSettings,
+			candidates.filter(model => this.#modelRegistry.hasConfiguredAuth(model)),
+		);
 		if (!preparation) {
 			// Cannot prepare compaction, fallback to re-prime
 			return true;
@@ -2354,12 +2364,6 @@ export class AgentSession {
 		// stable SessionEntry preserveData slot to carry across future advisor
 		// maintenance runs. Use an LLM summary even when the primary session is
 		// configured for snapcompact.
-		const availableModels = this.#modelRegistry.getAvailable();
-		const candidates = this.#resolveCompactionModelCandidates(advisorModel, availableModels);
-		if (candidates.length === 0) {
-			// No compaction candidates, fallback to re-prime
-			return true;
-		}
 
 		let compactResult: CompactionResult | undefined;
 		let lastError: unknown;
@@ -2945,6 +2949,12 @@ export class AgentSession {
 			event.type === "message_end" && event.message.role === "assistant"
 				? this.#demoteInterruptedThinkingOnUserInterrupt(event.message as AssistantMessage)
 				: undefined;
+		// `message_end` handling is fire-and-forget from agent-core. Make the
+		// hidden continuity turn visible to the next prompt before any awaited
+		// extension delivery or persistence can stall this handler.
+		if (interruptedThinkingMessage) {
+			this.agent.appendMessage(interruptedThinkingMessage);
+		}
 
 		const messageEndPersistence =
 			event.type === "message_end" ? this.#createMessageEndPersistenceSlot(event.message) : undefined;
@@ -3089,7 +3099,6 @@ export class AgentSession {
 				persistMessageEnd();
 			}
 			if (interruptedThinkingMessage) {
-				this.agent.appendMessage(interruptedThinkingMessage);
 				this.sessionManager.appendCustomMessageEntry(
 					interruptedThinkingMessage.customType,
 					interruptedThinkingMessage.content,
@@ -7863,16 +7872,24 @@ export class AgentSession {
 	/**
 	 * Set model directly.
 	 * Validates that a credential source is configured (synchronously, without
-	 * refreshing OAuth or running command-backed key programs) and saves to the
-	 * active session. Persists settings only when requested. The concrete key is
-	 * resolved lazily per request, so switching never blocks the event loop.
+	 * refreshing OAuth or running command-backed key programs). The active
+	 * session switches by default; when `currentContextTokens` is provided and
+	 * exceeds the refreshed candidate's context window, the live switch is
+	 * skipped while role persistence still runs. Returns whether the active
+	 * model actually switched, computed against the refreshed metadata so
+	 * dynamic providers (e.g. llama.cpp) honor their post-load contextWindow.
 	 * @throws Error if no API key available for the model
 	 */
 	async setModel(
 		model: Model,
 		role: string = "default",
-		options?: { selector?: string; thinkingLevel?: ThinkingLevel; persist?: boolean },
-	): Promise<void> {
+		options?: {
+			selector?: string;
+			thinkingLevel?: ThinkingLevel;
+			persist?: boolean;
+			currentContextTokens?: number;
+		},
+	): Promise<{ switched: boolean }> {
 		const previousEditMode = this.#resolveActiveEditMode();
 		if (!this.#modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
@@ -7880,14 +7897,27 @@ export class AgentSession {
 
 		const targetModel = await this.#modelRegistry.refreshSelectedModelMetadata(model);
 
-		this.#clearActiveRetryFallback();
-		this.#setModelWithProviderSessionReset(targetModel);
-		this.sessionManager.appendModelChange(`${targetModel.provider}/${targetModel.id}`, role);
+		const currentContextTokens = options?.currentContextTokens ?? 0;
+		const targetContextWindow = targetModel.contextWindow ?? 0;
+		const switched = !(
+			currentContextTokens > 0 &&
+			targetContextWindow > 0 &&
+			currentContextTokens > targetContextWindow
+		);
+
+		if (switched) {
+			this.#clearActiveRetryFallback();
+			this.#setModelWithProviderSessionReset(targetModel);
+			this.sessionManager.appendModelChange(`${targetModel.provider}/${targetModel.id}`, role);
+		}
 		if (options?.persist) {
 			this.settings.setModelRole(
 				role,
 				this.#formatRoleModelValue(role, targetModel, options.selector, options.thinkingLevel),
 			);
+		}
+		if (!switched) {
+			return { switched: false };
 		}
 		this.settings.getStorage()?.recordModelUsage(`${targetModel.provider}/${targetModel.id}`);
 
@@ -7895,6 +7925,7 @@ export class AgentSession {
 		// configured defaultLevel; otherwise preserve the current level (or auto).
 		this.#reapplyThinkingLevel(targetModel.thinking?.defaultLevel);
 		await this.#syncAfterModelChange(previousEditMode);
+		return { switched: true };
 	}
 
 	/**
@@ -8660,7 +8691,11 @@ export class AgentSession {
 				compactionCandidates = this.#getCompactionModelCandidates(availableModels);
 			}
 			const pathEntries = this.sessionManager.getBranch();
-			const preparation = prepareCompaction(pathEntries, effectiveSettings);
+			const preparation = prepareCompaction(
+				pathEntries,
+				effectiveSettings,
+				compactionCandidates.filter(model => this.#modelRegistry.hasConfiguredAuth(model)),
+			);
 			if (!preparation) {
 				// Check why we can't compact
 				const lastEntry = pathEntries[pathEntries.length - 1];
@@ -10945,7 +10980,10 @@ export class AgentSession {
 
 			const pathEntries = this.sessionManager.getBranch();
 
-			const preparation = prepareCompaction(pathEntries, compactionSettings);
+			const autoCompactionCandidates = this.#getCompactionModelCandidates(availableModels).filter(model =>
+				this.#modelRegistry.hasConfiguredAuth(model),
+			);
+			const preparation = prepareCompaction(pathEntries, compactionSettings, autoCompactionCandidates);
 			if (!preparation) {
 				await this.#emitSessionEvent({
 					type: "auto_compaction_end",
