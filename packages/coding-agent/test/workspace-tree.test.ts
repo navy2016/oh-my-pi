@@ -3,7 +3,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { buildDirectoryTree, buildWorkspaceTree } from "@oh-my-pi/pi-coding-agent/workspace-tree";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const tempDirs: string[] = [];
 
@@ -31,7 +30,7 @@ function lineIndex(rendered: string, needle: string): number {
 
 describe("buildWorkspaceTree", () => {
 	afterEach(async () => {
-		await Promise.all(tempDirs.splice(0).map(dir => removeWithRetries(dir)));
+		await Promise.all(tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
 	});
 
 	it("sorts files and directories together by modification time", async () => {

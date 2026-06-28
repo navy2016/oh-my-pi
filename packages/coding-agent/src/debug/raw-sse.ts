@@ -1,6 +1,13 @@
-import { type Component, matchesKey, parseSgrMouse, replaceTabs, ScrollView, truncateToWidth } from "@oh-my-pi/pi-tui";
+import {
+	type Component,
+	matchesKey,
+	padding,
+	replaceTabs,
+	ScrollView,
+	truncateToWidth,
+	visibleWidth,
+} from "@oh-my-pi/pi-tui";
 import { sanitizeText } from "@oh-my-pi/pi-utils";
-import { bottomBorder, divider, row, topBorder } from "../modes/components/overlay-box";
 import { theme } from "../modes/theme/theme";
 import { copyToClipboard } from "../utils/clipboard";
 import {
@@ -10,8 +17,8 @@ import {
 	rawSseRecordLines,
 } from "./raw-sse-buffer";
 
-const MIN_VIEWER_WIDTH = 40;
-const VIEWER_CHROME_LINES = 6;
+const MIN_VIEWER_WIDTH = 20;
+const VIEWER_FRAME_LINES = 5;
 // `data:` lines below this width render fine on a single row; anything wider gets pretty-printed
 // across multiple `data:` lines so streamed JSON blobs stop getting clipped by `truncateToWidth`.
 const PRETTY_PRINT_DATA_THRESHOLD = 100;
@@ -72,8 +79,6 @@ export class RawSseViewerComponent implements Component {
 	#followTail = true;
 	#lastRenderWidth = MIN_VIEWER_WIDTH;
 	#statusMessage: string | undefined;
-	#bodyRowStart = 0;
-	#bodyRowCount = 0;
 	// Pretty-printed wire lines keyed by `record.sequence`. Pretty-printing is
 	// the JSON.parse + JSON.stringify per `data:` line, so we cache the result —
 	// the render path runs on every keypress and from `#maxScrollOffset()`.
@@ -93,17 +98,9 @@ export class RawSseViewerComponent implements Component {
 		});
 	}
 
-	dispose(): void {
-		this.#unsubscribe();
-	}
-
 	handleInput(keyData: string): void {
-		if (keyData.startsWith("\x1b[<") && this.#handleMouse(keyData)) {
-			return;
-		}
-
 		if (matchesKey(keyData, "escape") || matchesKey(keyData, "esc")) {
-			this.dispose();
+			this.#unsubscribe();
 			this.#onExit();
 			return;
 		}
@@ -148,44 +145,15 @@ export class RawSseViewerComponent implements Component {
 		}
 	}
 
-	#handleMouse(keyData: string): boolean {
-		const event = parseSgrMouse(keyData);
-		if (!event) return false;
-
-		const overBody = event.row >= this.#bodyRowStart && event.row < this.#bodyRowStart + this.#bodyRowCount;
-		if (event.wheel !== null && overBody) {
-			this.#followTail = false;
-			this.#scrollOffset = Math.max(0, Math.min(this.#maxScrollOffset(), this.#scrollOffset + event.wheel * 3));
-			this.#onUpdate?.();
-			return true;
-		}
-
-		if (!event.leftClick) return false;
-		if (event.row === 1) {
-			this.#followTail = !this.#followTail;
-			this.#followIfNeeded();
-			this.#onUpdate?.();
-			return true;
-		}
-		if (overBody) {
-			this.#followTail = false;
-			const clickedOffset = this.#scrollOffset + event.row - this.#bodyRowStart;
-			this.#scrollOffset = Math.max(0, Math.min(this.#maxScrollOffset(), clickedOffset));
-			this.#onUpdate?.();
-			return true;
-		}
-		return false;
-	}
-
 	invalidate(): void {}
 
 	render(width: number): readonly string[] {
 		this.#lastRenderWidth = Math.max(MIN_VIEWER_WIDTH, width);
 		this.#followIfNeeded();
 
-		const contentWidth = Math.max(1, this.#lastRenderWidth - 4);
+		const innerWidth = Math.max(1, this.#lastRenderWidth - 2);
 		const bodyHeight = this.#bodyHeight();
-		const rawLines = this.#renderRawLines(contentWidth);
+		const rawLines = this.#renderRawLines(innerWidth);
 		const sv = new ScrollView(rawLines.slice(this.#scrollOffset, this.#scrollOffset + bodyHeight), {
 			height: bodyHeight,
 			scrollbar: "auto",
@@ -193,18 +161,15 @@ export class RawSseViewerComponent implements Component {
 			theme: { track: t => theme.fg("muted", t), thumb: t => theme.fg("accent", t) },
 		});
 		sv.setScrollOffset(this.#scrollOffset);
-		const bodyRows = sv.render(contentWidth);
-		this.#bodyRowStart = 3;
-		this.#bodyRowCount = bodyHeight;
+		const bodyRows = sv.render(innerWidth);
 
 		return [
-			topBorder(this.#lastRenderWidth, "Raw Provider Stream"),
-			row(this.#summaryText(), this.#lastRenderWidth),
-			divider(this.#lastRenderWidth),
-			...bodyRows.map(line => row(line, this.#lastRenderWidth)),
-			divider(this.#lastRenderWidth),
-			row(this.#statusText(), this.#lastRenderWidth),
-			bottomBorder(this.#lastRenderWidth),
+			this.#frameTop(innerWidth),
+			this.#frameLine(this.#summaryText(), innerWidth),
+			this.#frameSeparator(innerWidth),
+			...bodyRows.map(line => this.#frameLine(line, innerWidth)),
+			this.#frameLine(this.#statusText(), innerWidth),
+			this.#frameBottom(innerWidth),
 		];
 	}
 
@@ -256,25 +221,22 @@ export class RawSseViewerComponent implements Component {
 			if (key < firstSequence) this.#prettyLinesCache.delete(key);
 		}
 	}
+
 	#summaryText(): string {
 		const snapshot = this.#buffer.snapshot();
-		const last = snapshot.lastUpdatedAt
-			? `${theme.fg("muted", "last")} ${theme.fg("accent", formatRawSseIsoTime(snapshot.lastUpdatedAt))}`
-			: theme.fg("muted", "waiting for first frame");
-		const follow = this.#followTail ? theme.fg("success", "follow on") : theme.fg("warning", "follow off");
-		return `${theme.fg("muted", "events")} ${theme.fg("accent", String(snapshot.totalEvents))}  ${theme.fg("muted", "records")} ${theme.fg("accent", String(snapshot.records.length))}  ${last}  ${follow}`;
+		const last = snapshot.lastUpdatedAt ? ` last=${formatRawSseIsoTime(snapshot.lastUpdatedAt)}` : "";
+		const follow = this.#followTail ? "follow:on" : "follow:off";
+		return ` # raw provider stream (SSE + WS) | events=${snapshot.totalEvents} records=${snapshot.records.length}${last} | ${follow} | Esc back Ctrl+C copy End follow`;
 	}
 
 	#statusText(): string {
-		const help = "Esc close · Ctrl+C copy raw · End follow tail · wheel scroll · click summary toggles follow";
-		return this.#statusMessage
-			? `${theme.fg("success", this.#statusMessage)}  ${theme.fg("dim", help)}`
-			: theme.fg("dim", help);
+		return this.#statusMessage ?? " Up/Down scroll  PgUp/PgDn page";
 	}
 
 	#bodyHeight(): number {
-		return Math.max(3, (process.stdout.rows || this.#terminalRows || 24) - VIEWER_CHROME_LINES);
+		return Math.max(3, this.#terminalRows - VIEWER_FRAME_LINES);
 	}
+
 	#followIfNeeded(): void {
 		if (this.#followTail) this.#scrollToTail();
 	}
@@ -284,8 +246,8 @@ export class RawSseViewerComponent implements Component {
 	}
 
 	#maxScrollOffset(): number {
-		const contentWidth = Math.max(1, this.#lastRenderWidth - 4);
-		return Math.max(0, this.#renderRawLines(contentWidth).length - this.#bodyHeight());
+		const innerWidth = Math.max(1, this.#lastRenderWidth - 2);
+		return Math.max(0, this.#renderRawLines(innerWidth).length - this.#bodyHeight());
 	}
 
 	#copyAll(): void {
@@ -308,5 +270,23 @@ export class RawSseViewerComponent implements Component {
 			this.#statusMessage = `Copy failed: ${message}`;
 		}
 		this.#onUpdate?.();
+	}
+
+	#frameTop(innerWidth: number): string {
+		return `${theme.boxRound.topLeft}${theme.boxRound.horizontal.repeat(innerWidth)}${theme.boxRound.topRight}`;
+	}
+
+	#frameSeparator(innerWidth: number): string {
+		return `${theme.boxRound.teeRight}${theme.boxRound.horizontal.repeat(innerWidth)}${theme.boxRound.teeLeft}`;
+	}
+
+	#frameBottom(innerWidth: number): string {
+		return `${theme.boxRound.bottomLeft}${theme.boxRound.horizontal.repeat(innerWidth)}${theme.boxRound.bottomRight}`;
+	}
+
+	#frameLine(content: string, innerWidth: number): string {
+		const truncated = truncateToWidth(content, innerWidth);
+		const remaining = Math.max(0, innerWidth - visibleWidth(truncated));
+		return `${theme.boxRound.vertical}${truncated}${padding(remaining)}${theme.boxRound.vertical}`;
 	}
 }

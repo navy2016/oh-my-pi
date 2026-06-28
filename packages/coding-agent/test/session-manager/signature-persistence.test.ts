@@ -225,7 +225,7 @@ describe("SessionManager signature persistence", () => {
 				{ type: "text", text: "done" },
 			],
 			api: "openai-responses",
-			provider: "github-copilot",
+			provider: "openai",
 			model: "gpt-5-mini",
 			usage: {
 				input: 1,
@@ -250,8 +250,8 @@ describe("SessionManager signature persistence", () => {
 		const reloaded = await SessionManager.open(sessionFile);
 		const assistant = getAssistantMessage(reloaded);
 
-		// GitHub Copilot rejects replayed assistant-side native history on a warmed
-		// session, so its replay metadata is stripped in memory after rehydration.
+		// After rehydration, assistant providerPayload must be stripped to prevent
+		// stale native history replay on warmed sessions.
 		expect(assistant.providerPayload).toBeUndefined();
 		expect(assistant.content[0]).toMatchObject({
 			type: "thinking",

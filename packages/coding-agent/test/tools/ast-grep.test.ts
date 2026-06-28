@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 function createTestSession(cwd = "/tmp/test", overrides: Partial<ToolSession> = {}): ToolSession {
 	return {
@@ -44,7 +43,7 @@ describe("ast_grep parse errors", () => {
 			expect(details?.parseErrors?.[0]).not.toContain("someUnlikelyCall($A):");
 			expect(text.match(/parse error \(syntax tree contains error nodes\)/g)?.length ?? 0).toBe(1);
 		} finally {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 	it("caps parseErrors at PARSE_ERRORS_LIMIT and records the original total", async () => {
@@ -74,7 +73,7 @@ describe("ast_grep parse errors", () => {
 			expect(details?.parseErrorsTotal).toBe(fileCount);
 			expect(text).toContain(`Parse issues (20 / ${fileCount}):`);
 		} finally {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 	it("combines globbing from path and glob parameters", async () => {
@@ -110,7 +109,7 @@ describe("ast_grep parse errors", () => {
 			expect(details?.matchCount).toBe(2);
 			expect(details?.fileCount).toBe(2);
 		} finally {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 
@@ -139,7 +138,7 @@ describe("ast_grep parse errors", () => {
 			expect(details?.matchCount).toBe(1);
 			expect(details?.parseErrors).toBeUndefined();
 		} finally {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 });

@@ -4,7 +4,6 @@
  * Implements JSON-RPC 2.0 over HTTP POST with optional SSE streaming.
  * Based on MCP spec 2025-03-26.
  */
-import * as AIError from "@oh-my-pi/pi-ai/error";
 import { logger, readSseJson, Snowflake } from "@oh-my-pi/pi-utils";
 import type {
 	JsonRpcError,
@@ -187,8 +186,7 @@ export class HttpTransport implements MCPTransport {
 			return await this.#executeRequest<T>(method, params, options);
 		} catch (error) {
 			// Retry once on auth failure if onAuthError is wired
-			const status = error instanceof Error ? AIError.status(error) : undefined;
-			if (this.onAuthError && (status === 401 || status === 403)) {
+			if (this.onAuthError && error instanceof Error && /^HTTP (401|403):/.test(error.message)) {
 				const newHeaders = await this.onAuthError();
 				if (newHeaders) {
 					// Persist refreshed headers so subsequent requests use them directly

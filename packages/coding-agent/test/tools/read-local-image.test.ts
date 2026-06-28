@@ -15,7 +15,6 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { InternalUrlRouter, LocalProtocolHandler, parseInternalUrl } from "@oh-my-pi/pi-coding-agent/internal-urls";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 // 1x1 transparent PNG — small enough to pass through image loading untouched.
 const TINY_PNG = Buffer.from(
@@ -63,7 +62,7 @@ describe("read local:// images", () => {
 	afterEach(async () => {
 		LocalProtocolHandler.resetOverrideForTests();
 		InternalUrlRouter.resetForTests();
-		await removeWithRetries(testDir);
+		await fs.rm(testDir, { recursive: true, force: true });
 	});
 
 	it("decodes a local:// PNG into an inline image block", async () => {

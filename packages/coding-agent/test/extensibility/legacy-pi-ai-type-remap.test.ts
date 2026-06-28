@@ -10,7 +10,6 @@ import {
 	loadLegacyPiModule,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/legacy-pi-compat";
 import { Type as TypeBoxShimType } from "@oh-my-pi/pi-coding-agent/extensibility/typebox";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 // pi-ai 15.1.0 removed the runtime `Type` export from `@oh-my-pi/pi-ai`'s
 // package root. Legacy extensions (and their aliased-scope variants such as
@@ -30,7 +29,7 @@ afterEach(() => {
 
 afterAll(async () => {
 	for (const dir of tempRoots) {
-		await removeWithRetries(dir);
+		await fs.rm(dir, { recursive: true, force: true });
 	}
 });
 

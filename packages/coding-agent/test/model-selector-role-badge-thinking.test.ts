@@ -7,7 +7,6 @@ import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-regis
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ModelSelectorComponent } from "@oh-my-pi/pi-coding-agent/modes/components/model-selector";
 import { getThemeByName, setThemeInstance } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
-import type { ConfiguredThinkingLevel } from "@oh-my-pi/pi-coding-agent/thinking";
 import type { TUI } from "@oh-my-pi/pi-tui";
 
 function normalizeRenderedText(text: string): string {
@@ -67,7 +66,7 @@ function createContextTestModel(id: string, contextWindow: number): Model {
 function createScopedSelector(
 	models: Model[],
 	settings: Settings,
-	onSelect: (model: Model, role: string | null, thinkingLevel?: ConfiguredThinkingLevel, selector?: string) => void,
+	onSelect: (model: Model) => void,
 	options?: { temporaryOnly?: boolean; currentContextTokens?: number },
 ): ModelSelectorComponent {
 	const modelRegistry = {
@@ -84,7 +83,7 @@ function createScopedSelector(
 		settings,
 		modelRegistry,
 		models.map(model => ({ model })),
-		(model, role, thinkingLevel, selector) => onSelect(model, role, thinkingLevel, selector),
+		model => onSelect(model),
 		() => {},
 		options,
 	);
@@ -208,7 +207,7 @@ describe("ModelSelector role badge thinking display", () => {
 		expect(rendered).toContain("default/smol/plan/task/slow/custom roles");
 	});
 
-	test("opens over-context default role actions for global configuration", async () => {
+	test("opens the role assignment menu but guards over-context default switches", async () => {
 		installTestTheme();
 		const settings = Settings.isolated({});
 		const small = createContextTestModel("only-small", 4096);
@@ -226,18 +225,12 @@ describe("ModelSelector role badge thinking display", () => {
 		selector.handleInput("\n");
 		const afterOpen = normalizeRenderedText(selector.render(220).join("\n"));
 		expect(afterOpen).toContain("Action for: only-small");
-		expect(afterOpen).toContain("Set as DEFAULT (Default)");
-		expect(afterOpen).not.toContain("context>4.1k");
+		expect(afterOpen).toContain("Set as DEFAULT (Default) ⦸ context>4.1k");
 
 		selector.handleInput("\n");
 		const afterRoleEnter = normalizeRenderedText(selector.render(220).join("\n"));
-		expect(afterRoleEnter).toContain("Thinking for: Default (only-small)");
+		expect(afterRoleEnter).toContain("Thinking for: Fast (only-small)");
 		expect(onSelect).not.toHaveBeenCalled();
-
-		selector.handleInput("\n");
-		expect(onSelect.mock.calls[0]?.[0]).toBe(small);
-		expect(onSelect.mock.calls[0]?.[1]).toBe("default");
-		expect(onSelect.mock.calls[0]?.[3]).toBe("test/only-small");
 	});
 
 	test("uses cached models for Enter while offline refresh is still pending", () => {

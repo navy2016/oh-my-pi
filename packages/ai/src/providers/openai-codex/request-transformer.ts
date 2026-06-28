@@ -14,11 +14,11 @@ export interface ReasoningConfig {
 export interface CodexRequestOptions {
 	reasoningEffort?: ReasoningConfig["effort"];
 	reasoningSummary?: ReasoningConfig["summary"] | null;
-	/** Explicit `reasoning.context` override; defaults to `all_turns` for every Codex request when unset. */
+	/** Explicit `reasoning.context` override. Defaults to `all_turns` under {@link CodexRequestOptions.responsesLite}, otherwise omitted (server default is `current_turn`). */
 	reasoningContext?: CodexReasoningContext;
 	textVerbosity?: "low" | "medium" | "high";
 	include?: string[];
-	/** Responses Lite transport contract: strips image detail and disables parallel tool calling, mirroring codex-rs. */
+	/** Responses Lite transport contract: strips image detail and defaults `reasoning.context` to `all_turns`, mirroring codex-rs. */
 	responsesLite?: boolean;
 }
 
@@ -195,13 +195,8 @@ function stripImageDetails(input: InputItem[]): void {
 		for (const collection of [item.content, item.output]) {
 			if (!Array.isArray(collection)) continue;
 			for (const part of collection) {
-				if (
-					part &&
-					typeof part === "object" &&
-					(part as { type?: unknown }).type === "input_image" &&
-					"detail" in part
-				) {
-					part.detail = undefined;
+				if (part && typeof part === "object" && (part as { type?: unknown }).type === "input_image") {
+					delete (part as { detail?: unknown }).detail;
 				}
 			}
 		}
@@ -254,16 +249,20 @@ export async function transformRequestBody(
 			...body.reasoning,
 			...reasoningConfig,
 		};
-		// Default reasoning replay to `all_turns` for every Codex request,
-		// mirroring codex-rs; an explicit `reasoningContext` overrides it.
-		body.reasoning.context = options.reasoningContext ?? "all_turns";
+		// Responses Lite keeps reasoning replay server-side; codex-rs requests
+		// `all_turns` there and otherwise omits context so the server default
+		// (currently `current_turn`) applies.
+		const reasoningContext = options.reasoningContext ?? (responsesLite ? "all_turns" : undefined);
+		if (reasoningContext !== undefined) {
+			body.reasoning.context = reasoningContext;
+		}
 	} else {
 		delete body.reasoning;
 	}
 
 	body.text = {
 		...body.text,
-		verbosity: options.textVerbosity || "high",
+		verbosity: options.textVerbosity || "low",
 	};
 
 	const include = Array.isArray(options.include) ? [...options.include] : [];

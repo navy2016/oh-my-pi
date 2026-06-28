@@ -8,7 +8,6 @@ import type { PlanModeState } from "@oh-my-pi/pi-coding-agent/plan-mode/state";
 import type { ClientBridge } from "@oh-my-pi/pi-coding-agent/session/client-bridge";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { WriteTool } from "@oh-my-pi/pi-coding-agent/tools/write";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const FILE_CONTENT = "bridge write content\n";
 
@@ -44,7 +43,7 @@ describe("write tool ACP fs routing", () => {
 	});
 
 	afterEach(async () => {
-		await removeWithRetries(tmpDir);
+		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
 	it("routes plain text writes through the bridge and does not call Bun.write", async () => {

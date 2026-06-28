@@ -24,7 +24,7 @@ interface FakeWorkingLoader {
  * kept streaming. The fix tears the working loader down (stop + dereference) so
  * the next `agent_start` recreates and re-attaches it.
  */
-function createContext(options: { terminalProgress?: boolean } = {}) {
+function createContext() {
 	const streamState = { isStreaming: false };
 	const children: unknown[] = [];
 	const statusContainer = {
@@ -41,12 +41,9 @@ function createContext(options: { terminalProgress?: boolean } = {}) {
 		},
 	};
 	const workingLoaders: FakeWorkingLoader[] = [];
-	const setProgress = vi.fn();
 	const ctx = {
 		isInitialized: true,
-		settings: {
-			get: (path: string) => path === "terminal.showProgress" && options.terminalProgress === true,
-		},
+		settings: { get: () => false },
 		statusLine: { invalidate: vi.fn() },
 		updateEditorTopBorder: vi.fn(),
 		pendingTools: new Map<string, unknown>(),
@@ -69,7 +66,7 @@ function createContext(options: { terminalProgress?: boolean } = {}) {
 		showError: vi.fn(),
 		editor: { getText: () => "" },
 		sessionManager: { getSessionName: () => "test-session" },
-		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn(), terminal: { setProgress } },
+		ui: { requestRender: vi.fn(), requestComponentRender: vi.fn() },
 		viewSession: { isCompacting: false, getLastAssistantMessage: () => undefined },
 		session: {
 			get isStreaming() {
@@ -86,11 +83,10 @@ function createContext(options: { terminalProgress?: boolean } = {}) {
 		ctx.loadingAnimation = working as unknown as typeof ctx.loadingAnimation;
 		statusContainer.addChild(ctx.loadingAnimation);
 	});
-	return { ctx, streamState, statusContainer, workingLoaders, setProgress };
+	return { ctx, streamState, statusContainer, workingLoaders };
 }
 
 const AGENT_START = { type: "agent_start" } as unknown as AgentSessionEvent;
-const AGENT_END = { type: "agent_end" } as unknown as AgentSessionEvent;
 const COMPACTION_START = {
 	type: "auto_compaction_start",
 	reason: "overflow",
@@ -177,25 +173,5 @@ describe("EventController loader recovery after overflow maintenance", () => {
 		await controller.handleEvent(AGENT_START);
 		expect(ctx.loadingAnimation).toBeDefined();
 		expect(statusContainer.children).toContain(ctx.loadingAnimation);
-	});
-
-	it("mirrors agent and auto-compaction activity to OSC 9;4 when enabled", async () => {
-		const { ctx, setProgress } = createContext({ terminalProgress: true });
-		const controller = new EventController(ctx);
-
-		await controller.handleEvent(AGENT_START);
-		expect(setProgress).toHaveBeenCalledTimes(1);
-		expect(setProgress).toHaveBeenLastCalledWith(true);
-
-		await controller.handleEvent(COMPACTION_START);
-		expect(setProgress).toHaveBeenCalledTimes(1);
-
-		await controller.handleEvent(COMPACTION_END);
-		expect(setProgress).toHaveBeenCalledTimes(2);
-		expect(setProgress).toHaveBeenLastCalledWith(false);
-
-		await controller.handleEvent(AGENT_START);
-		await controller.handleEvent(AGENT_END);
-		expect(setProgress.mock.calls.map(call => call[0])).toEqual([true, false, true, false]);
 	});
 });

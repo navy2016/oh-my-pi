@@ -4,19 +4,6 @@
  */
 import { AgentRegistry } from "../registry/agent-registry";
 
-const extraArtifactsDirs = new Set<string>();
-
-export function registerArtifactsDir(dir: string): () => void {
-	extraArtifactsDirs.add(dir);
-	return () => {
-		extraArtifactsDirs.delete(dir);
-	};
-}
-
-export function resetRegisteredArtifactDirsForTests(): void {
-	extraArtifactsDirs.clear();
-}
-
 /**
  * Snapshot of artifacts dirs for every registered session, deduped.
  *
@@ -28,13 +15,11 @@ export function resetRegisteredArtifactDirsForTests(): void {
  */
 export function artifactsDirsFromRegistry(): string[] {
 	const dirs: string[] = [];
-	const addDir = (dir: string | null | undefined) => {
-		if (!dir) return;
-		if (!dirs.includes(dir)) dirs.push(dir);
-	};
 	for (const ref of AgentRegistry.global().list()) {
-		addDir(ref.session?.sessionManager.getArtifactsDir() ?? (ref.sessionFile ? ref.sessionFile.slice(0, -6) : null));
+		const dir =
+			ref.session?.sessionManager.getArtifactsDir() ?? (ref.sessionFile ? ref.sessionFile.slice(0, -6) : null);
+		if (!dir) continue;
+		if (!dirs.includes(dir)) dirs.push(dir);
 	}
-	for (const dir of extraArtifactsDirs) addDir(dir);
 	return dirs;
 }

@@ -6,7 +6,6 @@ import type { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentDashboard } from "@oh-my-pi/pi-coding-agent/modes/components/agent-dashboard";
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import * as discovery from "@oh-my-pi/pi-coding-agent/task/discovery";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const ANSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const tempDirs: string[] = [];
@@ -56,7 +55,7 @@ function stubStdoutGeometry(cols: number): { setRows(n: number): void; restore()
 
 afterEach(async () => {
 	vi.restoreAllMocks();
-	await Promise.all(tempDirs.splice(0).map(dir => removeWithRetries(dir)));
+	await Promise.all(tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
 });
 
 describe("AgentDashboard create editor", () => {

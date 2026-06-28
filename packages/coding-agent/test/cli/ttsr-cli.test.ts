@@ -10,7 +10,7 @@ import {
 	type TtsrTestArgs,
 } from "@oh-my-pi/pi-coding-agent/cli/ttsr-cli";
 import { resetSettingsForTest } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { getProjectAgentDir, getProjectDir, removeSyncWithRetries, setProjectDir } from "@oh-my-pi/pi-utils";
+import { getProjectAgentDir, getProjectDir, setProjectDir } from "@oh-my-pi/pi-utils";
 
 let testTmpDir: string;
 
@@ -20,7 +20,7 @@ beforeAll(() => {
 
 afterAll(() => {
 	if (testTmpDir && fs.existsSync(testTmpDir)) {
-		removeSyncWithRetries(testTmpDir);
+		fs.rmSync(testTmpDir, { force: true, recursive: true });
 	}
 });
 
@@ -92,7 +92,7 @@ async function writeTempSnippet(content: string, ext: string): Promise<string> {
 function cleanupTmp(): void {
 	if (!testTmpDir || !fs.existsSync(testTmpDir)) return;
 	for (const entry of fs.readdirSync(testTmpDir)) {
-		removeSyncWithRetries(path.join(testTmpDir, entry));
+		fs.rmSync(path.join(testTmpDir, entry), { force: true, recursive: true });
 	}
 }
 

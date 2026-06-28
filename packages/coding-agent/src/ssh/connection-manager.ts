@@ -32,7 +32,7 @@ export interface SSHHostInfo {
 const CONTROL_DIR = getSshControlDir();
 const CONTROL_PATH = path.join(CONTROL_DIR, "%C.sock");
 const HOST_INFO_DIR = getRemoteHostDir();
-const HOST_INFO_VERSION = 3;
+const HOST_INFO_VERSION = 2;
 
 const activeHosts = new Map<string, SSHConnectionTarget>();
 const pendingConnections = new Map<string, Promise<void>>();
@@ -40,8 +40,6 @@ const hostInfoCache = new Map<string, SSHHostInfo>();
 
 interface SSHArgsOptions {
 	platform?: SshPlatform;
-	/** When true, omit `-n` so the remote command can read from our piped stdin. */
-	allowStdin?: boolean;
 }
 
 function ensureControlDir() {
@@ -89,7 +87,7 @@ async function validateKeyPermissions(keyPath?: string, platform: SshPlatform = 
 }
 
 function buildCommonArgs(host: SSHConnectionTarget, options?: SSHArgsOptions): string[] {
-	const args = options?.allowStdin ? [] : ["-n"];
+	const args = ["-n"];
 
 	if (supportsSshControlMaster(options?.platform)) {
 		args.push("-o", "ControlMaster=auto", "-o", `ControlPath=${CONTROL_PATH}`, "-o", "ControlPersist=3600");
@@ -153,11 +151,7 @@ function parseShell(value: unknown): SSHHostShell | null {
 	if (normalized.includes("zsh")) return "zsh";
 	if (normalized.includes("pwsh") || normalized.includes("powershell")) return "powershell";
 	if (normalized.includes("cmd.exe") || normalized === "cmd") return "cmd";
-	// Only genuine POSIX sh-family by basename — fish/csh/tcsh also end in "sh"
-	// but are non-POSIX (csh/tcsh history-expand `!`), so they fall through to
-	// "unknown" and are refused by the ssh:// transfer guard.
-	const base = normalized.slice(normalized.lastIndexOf("/") + 1);
-	if (base === "sh" || base === "dash" || base === "ash" || base === "ksh" || base === "mksh") return "sh";
+	if (normalized.endsWith("sh") || normalized.includes("/sh")) return "sh";
 	return "unknown";
 }
 
@@ -299,9 +293,18 @@ async function probeHostInfo(host: SSHConnectionTarget): Promise<SSHHostInfo> {
 		os = "linux";
 	}
 
-	// Reuse parseShell so probe-time and cached classification stay identical.
-	let shell = parseShell(shellLower) ?? "unknown";
-	if (shell === "unknown" && os === "windows" && !shellLower) {
+	let shell: SSHHostShell = "unknown";
+	if (shellLower.includes("bash")) {
+		shell = "bash";
+	} else if (shellLower.includes("zsh")) {
+		shell = "zsh";
+	} else if (shellLower.includes("pwsh") || shellLower.includes("powershell")) {
+		shell = "powershell";
+	} else if (shellLower.includes("cmd.exe") || shellLower === "cmd") {
+		shell = "cmd";
+	} else if (shellLower.endsWith("sh") || shellLower.includes("/sh")) {
+		shell = "sh";
+	} else if (os === "windows" && !shellLower) {
 		shell = "cmd";
 	}
 

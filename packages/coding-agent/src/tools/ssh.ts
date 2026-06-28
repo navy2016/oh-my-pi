@@ -281,7 +281,6 @@ export const sshToolRenderer = {
 		result: {
 			content: Array<{ type: string; text?: string }>;
 			details?: SSHToolDetails;
-			isError?: boolean;
 		},
 		options: RenderResultOptions & { renderContext?: SshRenderContext },
 		uiTheme: Theme,
@@ -290,14 +289,8 @@ export const sshToolRenderer = {
 		const details = result.details;
 		const host = args?.host || "…";
 		const command = args?.command ?? "";
-		const isError = result.isError === true;
-		const isPartial = options.isPartial === true;
 		const header = renderStatusLine(
-			isPartial
-				? { icon: "pending", title: "SSH", description: `[${host}]` }
-				: isError
-					? { icon: "error", title: "SSH", description: `[${host}]` }
-					: { iconOverride: uiTheme.styledSymbol("tool.ssh", "accent"), title: "SSH", description: `[${host}]` },
+			{ iconOverride: uiTheme.styledSymbol("tool.ssh", "accent"), title: "SSH", description: `[${host}]` },
 			uiTheme,
 		);
 		const cmdLines = formatSshCommandLines(command, uiTheme);
@@ -349,7 +342,7 @@ export const sshToolRenderer = {
 				return outputBlock.render(
 					{
 						header,
-						state: isPartial ? "pending" : isError ? "error" : "success",
+						state: "success",
 						sections: [
 							{
 								// Viewport-sized tail window in every state — streaming and final
@@ -373,12 +366,4 @@ export const sshToolRenderer = {
 	// that shifts while args stream. Expanded output is top-anchored enough for
 	// the transcript to commit its settled prefix.
 	provisionalPendingPreview: "collapsed",
-	// Partial-result chrome (pending icon and frame state) differs from the
-	// final SSH glyph/state, so the block stays commit-unstable while
-	// `options.isPartial` holds. Without this, a long-running SSH command's
-	// stable pending header would be promoted by the stable-prefix ratchet and
-	// committed to native scrollback, then the final render's SSH glyph would
-	// land below and strand a duplicate pending header above the final frame
-	// ([#3177](https://github.com/can1357/oh-my-pi/issues/3177)).
-	provisionalPartialResult: true,
 };

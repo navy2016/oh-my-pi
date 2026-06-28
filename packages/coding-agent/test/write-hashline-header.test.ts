@@ -9,7 +9,6 @@ import { HashlineFilesystem } from "@oh-my-pi/pi-coding-agent/edit/hashline/file
 import { writethroughNoop } from "@oh-my-pi/pi-coding-agent/lsp";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { WriteTool } from "@oh-my-pi/pi-coding-agent/tools/write";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 function createSession(cwd: string): ToolSession {
 	return {
@@ -45,7 +44,7 @@ describe("write tool hashline header", () => {
 	});
 
 	afterEach(async () => {
-		await removeWithRetries(tmpDir);
+		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
 	it("inserts a fresh [path#TAG] header that maps to the written content", async () => {

@@ -5,10 +5,16 @@ import {
 	type AgentTelemetryConfig,
 	type AgentTool,
 	AppendOnlyContextManager,
-	filterProviderReplayMessages,
 	type ThinkingLevel,
 } from "@oh-my-pi/pi-agent-core";
-import type { Context, CredentialDisabledEvent, Message, Model, SimpleStreamOptions } from "@oh-my-pi/pi-ai";
+import {
+	type Context,
+	type CredentialDisabledEvent,
+	type Message,
+	type Model,
+	type SimpleStreamOptions,
+	streamSimple,
+} from "@oh-my-pi/pi-ai";
 import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
 import {
 	getOpenAICodexTransportDetails,
@@ -18,19 +24,13 @@ import { FALLBACK_DIALECT, preferredDialect } from "@oh-my-pi/pi-catalog/identit
 import type { Component } from "@oh-my-pi/pi-tui";
 import { $env, $flag, getAgentDir, getProjectDir, logger, postmortem, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import { INTENT_FIELD } from "@oh-my-pi/pi-wire";
-import {
-	ADVISOR_READONLY_TOOL_NAMES,
-	discoverWatchdogFiles,
-	formatActiveRepoWatchdogPrompt,
-	formatAdvisorContextPrompt,
-} from "./advisor";
+import { ADVISOR_READONLY_TOOL_NAMES, discoverWatchdogFiles } from "./advisor";
 import { type AsyncJob, AsyncJobManager } from "./async";
 import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
 import { bucketRules } from "./capability/rule-buckets";
 import { shouldEnableAppendOnlyContext } from "./config/append-only-context-mode";
-import { shouldInlineToolDescriptors } from "./config/inline-tool-descriptors-mode";
 import { ModelRegistry } from "./config/model-registry";
 import {
 	formatModelString,
@@ -118,7 +118,6 @@ import {
 import { clampProviderContextImages } from "./session/provider-image-budget";
 import { getRestorableSessionModels } from "./session/session-context";
 import { SessionManager } from "./session/session-manager";
-import { createSettingsAwareStreamFn } from "./session/settings-stream-fn";
 import { SnapcompactInlineTransformer } from "./session/snapcompact-inline";
 import { createSnapcompactSavingsRecorder } from "./session/snapcompact-savings-journal";
 import { closeAllConnections } from "./ssh/connection-manager";
@@ -159,9 +158,8 @@ import {
 	discoverStartupLspServers,
 	EditTool,
 	EvalTool,
+	FindTool,
 	filterInitialToolsForDiscoveryAll,
-	GlobTool,
-	GrepTool,
 	getSearchTools,
 	HIDDEN_TOOLS,
 	isImageProviderPreference,
@@ -172,6 +170,7 @@ import {
 	ReadTool,
 	ResolveTool,
 	renderSearchToolBm25Description,
+	SearchTool,
 	SearchToolBm25Tool,
 	setExcludedSearchProviders,
 	setPreferredImageProvider,
@@ -182,13 +181,11 @@ import {
 	WriteTool,
 	warmupLspServers,
 } from "./tools";
-import { normalizeToolName, normalizeToolNames } from "./tools/builtin-names";
 import { ToolContextStore } from "./tools/context";
 import { getImageGenTools } from "./tools/image-gen";
 import { wrapToolWithMetaNotice } from "./tools/output-meta";
 import { queueResolveHandler } from "./tools/resolve";
 import { ttsTool } from "./tools/tts";
-import { resolveActiveRepoContext } from "./utils/active-repo-context";
 import { EventBus } from "./utils/event-bus";
 import { buildNamedToolChoice } from "./utils/tool-choice";
 import { buildWorkspaceTree, type WorkspaceTree } from "./workspace-tree";
@@ -609,12 +606,12 @@ export {
 	createTools,
 	EditTool,
 	EvalTool,
-	GlobTool,
-	GrepTool,
+	FindTool,
 	HIDDEN_TOOLS,
 	loadSshTool,
 	ReadTool,
 	ResolveTool,
+	SearchTool,
 	type ToolSession,
 	WebSearchTool,
 	WriteTool,
@@ -969,7 +966,6 @@ function createCustomToolsExtension(tools: CustomTool[]): ExtensionFactory {
 					maxAttempts: event.maxAttempts,
 					delayMs: event.delayMs,
 					errorMessage: event.errorMessage,
-					errorId: event.errorId,
 				},
 				ctx,
 			),
@@ -1147,15 +1143,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		? Promise.resolve(options.contextFiles)
 		: logger.time("discoverContextFiles", discoverContextFiles, cwd, agentDir);
 	contextFilesPromise.catch(() => {});
-	const activeRepoContextPromise = logger.time("resolveActiveRepoContext", async () => {
-		try {
-			return await resolveActiveRepoContext(cwd);
-		} catch (err) {
-			logger.debug("Failed to resolve active repo context", { err: String(err) });
-			return null;
-		}
-	});
-	activeRepoContextPromise.catch(() => {});
 	const watchdogFilesPromise = logger.time("discoverWatchdogFiles", () => discoverWatchdogFiles(cwd, agentDir));
 	watchdogFilesPromise.catch(() => {});
 	const promptTemplatesPromise = options.promptTemplates
@@ -1403,11 +1390,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 		return result;
 	};
-	const [contextFiles, resolvedWorkspaceTree, watchdogFiles, activeRepoContext] = await Promise.all([
+	const [contextFiles, resolvedWorkspaceTree, watchdogFiles] = await Promise.all([
 		contextFilesPromise,
 		raceWithDeadline("buildWorkspaceTree", workspaceTreePromise),
 		watchdogFilesPromise,
-		activeRepoContextPromise,
 	]);
 
 	let agent: Agent;
@@ -1503,7 +1489,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			hasUI: options.hasUI ?? false,
 			enableLsp,
 			get hasEditTool() {
-				const requestedToolNames = options.toolNames ? normalizeToolNames(options.toolNames) : undefined;
+				const requestedToolNames = options.toolNames
+					? [...new Set(options.toolNames.map(name => name.toLowerCase()))]
+					: undefined;
 				return !requestedToolNames || requestedToolNames.includes("edit");
 			},
 			skipPythonPreflight: options.skipPythonPreflight,
@@ -2169,14 +2157,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			emitEvent: event => cursorEventEmitter?.(event),
 		});
 
-		// Resolve the inline-descriptors setting against the session-start model.
-		// `auto` enforces the per-model policy (inline for Gemini, off otherwise);
-		// like the rest of the prune machinery this is fixed for the session, so a
-		// mid-session model switch keeps the start-time decision.
-		const inlineToolDescriptors = shouldInlineToolDescriptors(
-			settings.get("inlineToolDescriptors"),
-			model ? (modelRegistry.getCanonicalId(model) ?? model.id) : undefined,
-		);
+		const inlineToolDescriptors = settings.get("inlineToolDescriptors");
 		const eagerTasks = settings.get("task.eager") !== "default";
 		const eagerTasksAlways = settings.get("task.eager") === "always";
 		const intentField = $flag("PI_INTENT_TRACING", settings.get("tools.intentTracing")) ? INTENT_FIELD : undefined;
@@ -2279,7 +2260,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				model: settings.get("includeModelInPrompt") ? getActiveModelString() : undefined,
 				personality: agentKind === "sub" ? "none" : settings.get("personality"),
 				renderMermaid: settings.get("tui.renderMermaid"),
-				activeRepoContext,
 			});
 
 			if (options.systemPrompt === undefined) {
@@ -2295,7 +2275,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		};
 
 		const toolNamesFromRegistry = Array.from(toolRegistry.keys());
-		const explicitlyRequestedToolNames = options.toolNames ? normalizeToolNames(options.toolNames) : undefined;
+		const explicitlyRequestedToolNames = options.toolNames
+			? [...new Set(options.toolNames.map(name => name.toLowerCase()))]
+			: undefined;
 		// When `requireYieldTool` is set, the subagent's prompts and idle-reminders demand a
 		// `yield` call to terminate. The tool registry already includes `yield` (see
 		// `createTools`), but an explicit `toolNames` list would otherwise drop it from the
@@ -2345,14 +2327,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 					discoveryDefaultServers,
 				)
 			: [];
-		const normalizeRenamedBuiltinToolName = normalizeToolName;
 		let initialSelectedMCPToolNames: string[] = [];
 		let defaultSelectedMCPToolNames: string[] = [];
 		let initialToolNames = [...initialRequestedActiveToolNames];
 		if (mcpDiscoveryEnabled) {
-			const restoredSelectedMCPToolNames = existingSession.selectedMCPToolNames
-				.map(normalizeRenamedBuiltinToolName)
-				.filter(name => toolRegistry.has(name));
+			const restoredSelectedMCPToolNames = existingSession.selectedMCPToolNames.filter(name =>
+				toolRegistry.has(name),
+			);
 			defaultSelectedMCPToolNames = [
 				...new Set([...discoveryDefaultServerToolNames, ...explicitlyRequestedMCPToolNames]),
 			];
@@ -2401,10 +2382,10 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			initialToolNames = filterInitialToolsForDiscoveryAll(initialToolNames, {
 				loadModeOf: name => toolRegistry.get(name)?.loadMode,
 				essentialNames: new Set(computeEssentialBuiltinNames(settings)),
-				explicitlyRequested: new Set(options.toolNames ? normalizeToolNames(options.toolNames) : []),
+				explicitlyRequested: new Set(options.toolNames?.map(name => name.toLowerCase()) ?? []),
 				// Back-compat: persisted activations live under selectedMCPToolNames today (built-in
 				// activation persistence is a follow-up). MCP names won't collide with built-in names.
-				restored: new Set(existingSession.selectedMCPToolNames.map(normalizeRenamedBuiltinToolName)),
+				restored: new Set(existingSession.selectedMCPToolNames),
 				forceActive,
 			});
 		}
@@ -2468,10 +2449,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			});
 		};
 
-		// Final convertToLlm: live provider replay drops API-level refusal errors,
-		// then applies secret obfuscation to the remaining outbound context.
+		// Final convertToLlm: chain block-images filter with secret obfuscation
 		const convertToLlmFinal = (messages: AgentMessage[]): Message[] => {
-			const converted = filterProviderReplayMessages(convertToLlmWithBlockImages(messages));
+			const converted = convertToLlmWithBlockImages(messages);
 			if (!obfuscator?.hasSecrets()) return converted;
 			return obfuscateMessages(obfuscator, converted);
 		};
@@ -2531,11 +2511,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// One-shot launch-latency marker: fired the first time the loop dispatches
 		// a chat request to the provider transport. See onFirstChatDispatch.
 		let notifyFirstChatDispatch = options.onFirstChatDispatch;
-		// Shared, settings-aware stream wrapper used by both the main agent and
-		// the advisor (via AgentSessionConfig.streamFn). Keeps OpenRouter
-		// sticky-routing variants, antigravity endpoint routing, in-flight caps,
-		// and the loop guard consistent across every agent the session drives.
-		const settingsAwareStreamFn = createSettingsAwareStreamFn(settings);
 		agent = new Agent({
 			initialState: {
 				systemPrompt,
@@ -2544,12 +2519,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				disableReasoning: shouldDisableReasoning(effectiveThinkingLevel),
 				tools: initialTools,
 			},
-			cwd,
-			// Live cwd: `/move` updates SessionManager (and process cwd) without
-			// reconstructing the Agent, so a static cwd would strand GitLab Duo Agent
-			// namespace/project discovery on the original repo's git remote. Re-read it
-			// per turn from the SessionManager.
-			cwdResolver: () => sessionManager.getCwd(),
 			convertToLlm: convertToLlmFinal,
 			onPayload,
 			onResponse,
@@ -2586,7 +2555,20 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						});
 					}
 				}
-				return settingsAwareStreamFn(streamModel, context, streamOptions);
+				const openrouterRoutingPreset = settings.get("providers.openrouterVariant");
+				const openrouterVariant =
+					openrouterRoutingPreset && openrouterRoutingPreset !== "default" ? openrouterRoutingPreset : undefined;
+				const antigravityEndpointMode = settings.get("providers.antigravityEndpoint");
+				return streamSimple(streamModel, context, {
+					...streamOptions,
+					openrouterVariant: streamOptions?.openrouterVariant ?? openrouterVariant,
+					antigravityEndpointMode: streamOptions?.antigravityEndpointMode ?? antigravityEndpointMode,
+					loopGuard: {
+						enabled: settings.get("model.loopGuard.enabled"),
+						checkAssistantContent: settings.get("model.loopGuard.checkAssistantContent"),
+						...streamOptions?.loopGuard,
+					},
+				});
 			},
 			cursorExecHandlers,
 			transformToolCallArguments: (args, _toolName) => {
@@ -2634,7 +2616,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		}
 
 		// Hard-isolated read-only toolset for the advisor (built unconditionally so
-		// it can be toggled at runtime). Fresh ReadTool/GrepTool/GlobTool bound to a
+		// it can be toggled at runtime). Fresh ReadTool/SearchTool/FindTool bound to a
 		// DISTINCT ToolSession so the advisor's investigative reads never touch the
 		// primary's snapshot, seen-lines, conflict, or summary caches (all keyed on
 		// session identity). `cwd` stays dynamic; edit/yield capabilities are off.
@@ -2662,21 +2644,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			.filter((tool): tool is Tool => tool != null)
 			.map(wrapToolWithMetaNotice);
 
-		const advisorWatchdogPrompts = [...watchdogFiles];
-		if (activeRepoContext) {
-			advisorWatchdogPrompts.push(formatActiveRepoWatchdogPrompt(activeRepoContext));
+		let advisorWatchdogPrompt: string | undefined;
+		if (watchdogFiles && watchdogFiles.length > 0) {
+			advisorWatchdogPrompt = watchdogFiles.join("\n\n");
 		}
-		const advisorWatchdogPrompt = advisorWatchdogPrompts.length > 0 ? advisorWatchdogPrompts.join("\n\n") : undefined;
-		// Hand the advisor the same project context files (AGENTS.md, etc.) the
-		// primary agent gets in its system prompt, so the read-only reviewer judges
-		// against the user's standing project rules instead of advising blind.
-		const advisorContextPrompt = formatAdvisorContextPrompt(contextFiles);
 		// Owned only when this session created the manager; subagents receive a
 		// parent's manager via `options.mcpManager` and MUST NOT disconnect it.
 		const ownedMcpManager = options.mcpManager ? undefined : mcpManager;
 		session = new AgentSession({
 			advisorWatchdogPrompt,
-			advisorContextPrompt,
 			agent,
 			pruneToolDescriptions: inlineToolDescriptors,
 			thinkingLevel: autoThinking ? AUTO_THINKING : effectiveThinkingLevel,
@@ -2702,10 +2678,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			toolRegistry,
 			builtInToolNames: builtInRegistryToolNames,
 			transformContext,
-			transformProviderContext,
 			onPayload,
 			onResponse,
-			advisorStreamFn: settingsAwareStreamFn,
 			convertToLlm: convertToLlmFinal,
 			rebuildSystemPrompt,
 			reloadSshTool,

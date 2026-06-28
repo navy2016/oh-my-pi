@@ -25,7 +25,6 @@ import {
 	renderToolExamples,
 	wrapInbandToolStream,
 } from "@oh-my-pi/pi-ai/dialect";
-import * as AIError from "@oh-my-pi/pi-ai/error";
 import {
 	createHarmonyAuditEvent,
 	detectHarmonyLeakInAssistantMessage,
@@ -135,6 +134,7 @@ export function resolveOwnedDialectFromEnv(value: string | undefined): Dialect |
 		case "anthropic":
 		case "deepseek":
 		case "harmony":
+		case "pi":
 		case "qwen3":
 		case "gemini":
 		case "gemma":
@@ -1225,9 +1225,6 @@ async function streamAssistantResponse(
 	const effectiveToolChoice = ownedDialect ? undefined : (hostToolChoice ?? forcedToolChoice ?? config.toolChoice);
 	const effectiveReasoning = dynamicReasoning ?? config.reasoning;
 	const effectiveDisableReasoning = dynamicDisableReasoning ?? config.disableReasoning;
-	// `getCwd` is read once per LLM call so a mid-run session move (`/move`) reaches
-	// workspace-scoped provider discovery; falls back to the static `cwd` when unset.
-	const effectiveCwd = config.getCwd?.() ?? config.cwd;
 
 	const chatStepNumber = stepCounter.count;
 	stepCounter.count += 1;
@@ -1279,7 +1276,6 @@ async function streamAssistantResponse(
 				disableReasoning: effectiveDisableReasoning,
 				temperature: effectiveTemperature,
 				serviceTier: effectiveServiceTier,
-				cwd: effectiveCwd,
 				signal: finalRequestSignal,
 				onResponse: captureOnResponse,
 			});
@@ -1557,12 +1553,8 @@ function emitAbortedAssistantMessage(
 	requestSignal: AbortSignal | undefined,
 ): AssistantMessage {
 	const errorMessage = abortReasonText(requestSignal);
-	const errorId =
-		errorMessage === "Request was aborted"
-			? AIError.create(AIError.Flag.Abort)
-			: AIError.classify(requestSignal?.reason) || undefined;
 	const base: AssistantMessage = partialMessage
-		? { ...partialMessage, stopReason: "aborted", errorMessage, errorId }
+		? { ...partialMessage, stopReason: "aborted", errorMessage }
 		: {
 				role: "assistant",
 				content: [],
@@ -1579,7 +1571,6 @@ function emitAbortedAssistantMessage(
 				},
 				stopReason: "aborted",
 				errorMessage,
-				errorId,
 				timestamp: Date.now(),
 			};
 	// Only tool calls that reached `toolcall_end` survive abort/error replay. A

@@ -3,7 +3,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as connectionManager from "@oh-my-pi/pi-coding-agent/ssh/connection-manager";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 async function withLooseKey<T>(run: (keyPath: string) => Promise<T>): Promise<T> {
 	const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-ssh-key-"));
@@ -13,7 +12,7 @@ async function withLooseKey<T>(run: (keyPath: string) => Promise<T>): Promise<T>
 	try {
 		return await run(keyPath);
 	} finally {
-		await removeWithRetries(dir);
+		await fs.rm(dir, { recursive: true, force: true });
 	}
 }
 
@@ -88,7 +87,7 @@ describe("buildRemoteCommand", () => {
 				),
 			).rejects.toThrow("SSH key not found");
 		} finally {
-			await removeWithRetries(dir);
+			await fs.rm(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -107,7 +106,7 @@ describe("buildRemoteCommand", () => {
 				),
 			).rejects.toThrow("SSH key is not a file");
 		} finally {
-			await removeWithRetries(keyPath);
+			await fs.rm(keyPath, { recursive: true, force: true });
 		}
 	});
 

@@ -96,11 +96,9 @@ function getPromptActionPrefix(textBeforeCursor: string): string | null {
 export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 	#baseProvider: CombinedAutocompleteProvider;
 	#actions: PromptActionDefinition[];
-	#basePath: string;
 
 	constructor(commands: SlashCommand[], basePath: string, actions: PromptActionDefinition[]) {
 		this.#baseProvider = new CombinedAutocompleteProvider(commands, basePath);
-		this.#basePath = basePath;
 		this.#actions = actions;
 	}
 
@@ -135,7 +133,7 @@ export class PromptActionAutocompleteProvider implements AutocompleteProvider {
 			}
 		}
 
-		const urlSuggestions = await getInternalUrlSuggestions(textBeforeCursor, this.#basePath);
+		const urlSuggestions = await getInternalUrlSuggestions(textBeforeCursor);
 		if (urlSuggestions) return urlSuggestions;
 
 		if (!isSettingsInitialized() || settings.get("emojiAutocomplete")) {

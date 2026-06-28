@@ -9,7 +9,6 @@ import { OmfgController } from "@oh-my-pi/pi-coding-agent/modes/controllers/omfg
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
 import { Container, type TUI } from "@oh-my-pi/pi-tui";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const PROJECT_OPTION = "This project (.omp/rules)";
 const GLOBAL_OPTION = "Global — all projects (~/.omp/agent/rules)";
@@ -166,7 +165,7 @@ afterEach(async () => {
 	while (tempRoots.length > 0) {
 		const root = tempRoots.pop();
 		if (root) {
-			await removeWithRetries(root);
+			await fs.rm(root, { recursive: true, force: true });
 		}
 	}
 });

@@ -4,7 +4,6 @@
  * Both providers use the same authorization-code flow shape; only the client
  * credentials, scopes, endpoint constants, and project-discovery logic differ.
  */
-import * as AIError from "../../error";
 import { extractGoogleValidationUrl, formatGoogleValidationRequiredMessage } from "../../utils/google-validation";
 import { OAuthCallbackFlow } from "./callback-server";
 import type { OAuthController, OAuthCredentials } from "./types";
@@ -80,7 +79,7 @@ export class GoogleOAuthFlow extends OAuthCallbackFlow {
 
 		if (!tokenResponse.ok) {
 			const error = await tokenResponse.text();
-			throw new AIError.OAuthError(`Token exchange failed: ${error}`, { kind: "token-exchange" });
+			throw new Error(`Token exchange failed: ${error}`);
 		}
 
 		const tokenData = (await tokenResponse.json()) as {
@@ -90,7 +89,7 @@ export class GoogleOAuthFlow extends OAuthCallbackFlow {
 		};
 
 		if (!tokenData.refresh_token) {
-			throw new AIError.OAuthError("No refresh token received. Please try again.", { kind: "validation" });
+			throw new Error("No refresh token received. Please try again.");
 		}
 
 		this.ctrl.onProgress?.("Getting user info...");
@@ -101,9 +100,7 @@ export class GoogleOAuthFlow extends OAuthCallbackFlow {
 		} catch (err) {
 			const validationUrl = extractGoogleValidationUrl(err instanceof Error ? err.message : String(err));
 			if (!validationUrl) throw err;
-			throw new AIError.OAuthError(formatGoogleValidationRequiredMessage(validationUrl, "sign in again", email), {
-				kind: "validation",
-			});
+			throw new Error(formatGoogleValidationRequiredMessage(validationUrl, "sign in again", email));
 		}
 
 		return {

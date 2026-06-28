@@ -39,14 +39,13 @@ import { AstEditTool } from "./ast-edit";
 import { AstGrepTool } from "./ast-grep";
 import { BashTool } from "./bash";
 import { BrowserTool } from "./browser";
-import { type BuiltinToolName, normalizeToolNames } from "./builtin-names";
+import type { BuiltinToolName } from "./builtin-names";
 import { type CheckpointState, CheckpointTool, RewindTool } from "./checkpoint";
 import { DebugTool } from "./debug";
 import { EvalTool } from "./eval";
 import { resolveEvalBackends } from "./eval-backends";
+import { FindTool } from "./find";
 import { GithubTool } from "./gh";
-import { GlobTool } from "./glob";
-import { GrepTool } from "./grep";
 import { InspectImageTool } from "./inspect-image";
 import { IrcTool, isIrcEnabled } from "./irc";
 import { JobTool } from "./job";
@@ -61,6 +60,7 @@ import { ReadTool } from "./read";
 import { createReportToolIssueTool, isAutoQaEnabled } from "./report-tool-issue";
 import { ResolveTool } from "./resolve";
 import { reportFindingTool } from "./review";
+import { SearchTool } from "./search";
 import { SearchToolBm25Tool } from "./search-tool-bm25";
 import { loadSshTool } from "./ssh";
 import { type TodoPhase, TodoTool } from "./todo";
@@ -82,9 +82,8 @@ export * from "./checkpoint";
 export * from "./debug";
 export * from "./eval";
 export * from "./eval-backends";
+export * from "./find";
 export * from "./gh";
-export * from "./glob";
-export * from "./grep";
 export * from "./image-gen";
 export * from "./inspect-image";
 export * from "./irc";
@@ -99,6 +98,7 @@ export * from "./read";
 export * from "./report-tool-issue";
 export * from "./resolve";
 export * from "./review";
+export * from "./search";
 export * from "./search-tool-bm25";
 export * from "./ssh";
 export * from "./todo";
@@ -384,7 +384,7 @@ export const DEFAULT_ESSENTIAL_TOOL_NAMES: readonly string[] = [
 	"bash",
 	"edit",
 	"write",
-	"glob",
+	"find",
 	"eval",
 ] as const;
 
@@ -395,7 +395,7 @@ export const DEFAULT_ESSENTIAL_TOOL_NAMES: readonly string[] = [
  */
 export function computeEssentialBuiltinNames(settings: Settings): string[] {
 	const override = settings.get("tools.essentialOverride") ?? [];
-	const cleaned = normalizeToolNames(override.map(name => name.trim()).filter(Boolean));
+	const cleaned = override.map(name => name.trim()).filter(Boolean);
 	if (cleaned.length > 0) {
 		return cleaned.filter(name => name in BUILTIN_TOOLS);
 	}
@@ -449,8 +449,8 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	eval: s => new EvalTool(s),
 	ssh: loadSshTool,
 	github: GithubTool.createIf,
-	glob: s => new GlobTool(s),
-	grep: s => new GrepTool(s),
+	find: s => new FindTool(s),
+	search: s => new SearchTool(s),
 	lsp: LspTool.createIf,
 	inspect_image: s => new InspectImageTool(s),
 	browser: s => new BrowserTool(s),
@@ -487,7 +487,8 @@ export type ToolName = BuiltinToolName;
 export async function createTools(session: ToolSession, toolNames?: string[]): Promise<Tool[]> {
 	const includeYield = session.requireYieldTool === true;
 	const enableLsp = session.enableLsp ?? true;
-	let requestedTools = toolNames && toolNames.length > 0 ? normalizeToolNames(toolNames) : undefined;
+	let requestedTools =
+		toolNames && toolNames.length > 0 ? [...new Set(toolNames.map(name => name.toLowerCase()))] : undefined;
 	const goalEnabled = session.settings.get("goal.enabled");
 	const goalModeActive = goalEnabled && session.getGoalModeState?.()?.enabled === true;
 	if (goalModeActive && requestedTools && !requestedTools.includes("goal")) {
@@ -551,7 +552,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 	// Auto-include AST counterparts when their text-based sibling is present
 	if (requestedTools) {
 		if (
-			requestedTools.includes("grep") &&
+			requestedTools.includes("search") &&
 			!requestedTools.includes("ast_grep") &&
 			session.settings.get("astGrep.enabled")
 		) {
@@ -601,8 +602,8 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		if (name === "eval") return allowEval;
 		if (name === "debug") return session.settings.get("debug.enabled");
 		if (name === "todo") return !includeYield && session.settings.get("todo.enabled");
-		if (name === "glob") return session.settings.get("glob.enabled");
-		if (name === "grep") return session.settings.get("grep.enabled");
+		if (name === "find") return session.settings.get("find.enabled");
+		if (name === "search") return session.settings.get("search.enabled");
 		if (name === "github") return session.settings.get("github.enabled");
 		if (name === "ast_grep") return session.settings.get("astGrep.enabled");
 		if (name === "ast_edit") return session.settings.get("astEdit.enabled");

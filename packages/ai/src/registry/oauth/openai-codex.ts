@@ -3,7 +3,6 @@
  */
 
 import { OPENAI_HEADER_VALUES } from "@oh-my-pi/pi-catalog/wire/codex";
-import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 import { isRecord } from "../../utils";
 import { OAuthCallbackFlow, type OAuthCallbackFlowOptions } from "./callback-server";
@@ -176,10 +175,7 @@ async function exchangeCodeForToken(
 
 	if (!tokenResponse.ok) {
 		const bodyText = await tokenResponse.text();
-		throw new AIError.OAuthError(
-			`Token exchange failed: ${formatOpenAICodexTokenEndpointError(tokenResponse.status, bodyText)}`,
-			{ kind: "token-exchange", status: tokenResponse.status },
-		);
+		throw new Error(`Token exchange failed: ${formatOpenAICodexTokenEndpointError(tokenResponse.status, bodyText)}`);
 	}
 
 	const tokenData = (await tokenResponse.json()) as {
@@ -189,12 +185,12 @@ async function exchangeCodeForToken(
 	};
 
 	if (!tokenData.access_token || !tokenData.refresh_token || typeof tokenData.expires_in !== "number") {
-		throw new AIError.OAuthError("Token response missing required fields", { kind: "validation" });
+		throw new Error("Token response missing required fields");
 	}
 
 	const { accountId, email } = getTokenProfile(tokenData.access_token);
 	if (!accountId) {
-		throw new AIError.OAuthError("Failed to extract accountId from token", { kind: "validation" });
+		throw new Error("Failed to extract accountId from token");
 	}
 
 	return {
@@ -239,10 +235,7 @@ export async function loginOpenAICodexDevice(ctrl: OAuthController): Promise<OAu
 	});
 
 	if (!initResponse.ok) {
-		throw new AIError.OAuthError(`Device authorization initiation failed: ${initResponse.status}`, {
-			kind: "device-auth",
-			status: initResponse.status,
-		});
+		throw new Error(`Device authorization initiation failed: ${initResponse.status}`);
 	}
 
 	const initData = (await initResponse.json()) as {
@@ -252,7 +245,7 @@ export async function loginOpenAICodexDevice(ctrl: OAuthController): Promise<OAu
 	};
 
 	if (!initData.device_auth_id || !initData.user_code) {
-		throw new AIError.OAuthError("Device authorization response missing required fields", { kind: "validation" });
+		throw new Error("Device authorization response missing required fields");
 	}
 
 	const userCode = initData.user_code;
@@ -274,7 +267,7 @@ export async function loginOpenAICodexDevice(ctrl: OAuthController): Promise<OAu
 		await Bun.sleep(poll === 0 ? Math.min(pollIntervalMs, DEVICE_POLL_INTERVAL_MS) : pollIntervalMs);
 
 		if (ctrl.signal?.aborted) {
-			throw new AIError.LoginCancelledError("Device authorization cancelled");
+			throw new Error("Device authorization cancelled");
 		}
 
 		const pollResponse = await fetch(DEVICE_TOKEN_URL, {
@@ -293,10 +286,7 @@ export async function loginOpenAICodexDevice(ctrl: OAuthController): Promise<OAu
 		}
 
 		if (!pollResponse.ok) {
-			throw new AIError.OAuthError(`Device token polling failed: ${pollResponse.status}`, {
-				kind: "polling",
-				status: pollResponse.status,
-			});
+			throw new Error(`Device token polling failed: ${pollResponse.status}`);
 		}
 
 		const pollData = (await pollResponse.json()) as {
@@ -305,18 +295,14 @@ export async function loginOpenAICodexDevice(ctrl: OAuthController): Promise<OAu
 		};
 
 		if (!pollData.authorization_code || !pollData.code_verifier) {
-			throw new AIError.OAuthError("Device token response missing authorization_code or code_verifier", {
-				kind: "validation",
-			});
+			throw new Error("Device token response missing authorization_code or code_verifier");
 		}
 
 		ctrl.onProgress?.("Exchanging authorization code for tokens…");
 		return exchangeCodeForToken(pollData.authorization_code, pollData.code_verifier, DEVICE_REDIRECT_URI);
 	}
 
-	throw new AIError.OAuthError("Device authorization timed out — user did not complete login in time", {
-		kind: "timeout",
-	});
+	throw new Error("Device authorization timed out — user did not complete login in time");
 }
 
 /**
@@ -336,9 +322,8 @@ export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAu
 
 	if (!response.ok) {
 		const bodyText = await response.text();
-		throw new AIError.OAuthError(
+		throw new Error(
 			`OpenAI Codex token refresh failed: ${formatOpenAICodexTokenEndpointError(response.status, bodyText)}`,
-			{ kind: "token-refresh", status: response.status },
 		);
 	}
 
@@ -349,7 +334,7 @@ export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAu
 	};
 
 	if (!tokenData.access_token || !tokenData.refresh_token || typeof tokenData.expires_in !== "number") {
-		throw new AIError.OAuthError("Token response missing required fields", { kind: "validation" });
+		throw new Error("Token response missing required fields");
 	}
 
 	const { accountId, email } = getTokenProfile(tokenData.access_token);

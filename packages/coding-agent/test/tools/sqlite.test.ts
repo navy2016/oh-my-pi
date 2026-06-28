@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import "@oh-my-pi/pi-coding-agent/tools/renderers";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { ReadTool } from "@oh-my-pi/pi-coding-agent/tools/read";
@@ -179,7 +178,7 @@ describe("SQLite tool support", () => {
 		} else {
 			Bun.env.PI_EDIT_VARIANT = originalEditVariant;
 		}
-		await removeWithRetries(tmpDir);
+		await fs.rm(tmpDir, { recursive: true, force: true });
 	});
 
 	it("parses SQLite path candidates at the extension boundary", () => {

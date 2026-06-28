@@ -1,5 +1,4 @@
 import { describe, expect, it } from "bun:test";
-import { renderDemotedThinking } from "@oh-my-pi/pi-ai/dialect";
 import { convertMessages } from "@oh-my-pi/pi-ai/providers/openai-completions";
 import type { AssistantMessage, Model, ModelSpec, ThinkingContent, ToolCall } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
@@ -328,7 +327,7 @@ describe("DeepSeek reasoning_content tool-call replay", () => {
 			// Should have set reasoning_content from the thinking text via the openai path.
 			expect(assistant?.reasoning_content).toBe("some reasoning");
 		});
-		it("demotes cross-api foreign thinking while satisfying tool-call reasoning_content schema", () => {
+		it("replays cross-api thinking with stripped signature through reasoning_content", () => {
 			const model = deepseekModel({
 				provider: "opencode-go",
 				baseUrl: "https://opencode.ai/zen/go/v1",
@@ -355,8 +354,8 @@ describe("DeepSeek reasoning_content tool-call replay", () => {
 			const messages = convertMessages(model, { messages: [msg] }, compat);
 			const assistant = findOpenAICompletionAssistantWireMessage(messages);
 			expect(assistant).toBeDefined();
-			expect(assistant?.reasoning_content).toBe("");
-			expect(assistant?.content).toBe(renderDemotedThinking(model.id, "Need to preserve cross-api reasoning."));
+			expect(assistant?.reasoning_content).toBe("Need to preserve cross-api reasoning.");
+			expect(assistant?.content).toBe("");
 		});
 		it("falls through to empty-string when thinking block has opaque signature and empty text", () => {
 			const model = deepseekModel({

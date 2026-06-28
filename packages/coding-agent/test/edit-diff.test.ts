@@ -10,7 +10,6 @@ import {
 	DEFAULT_FUZZY_THRESHOLD,
 	findMatch,
 } from "@oh-my-pi/pi-coding-agent/edit";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 describe("findMatch", () => {
 	describe("exact matching", () => {
@@ -228,7 +227,7 @@ describe("computeHashlineDiff", () => {
 
 	afterEach(async () => {
 		if (tempDir) {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 
@@ -309,7 +308,7 @@ describe("computeEditDiff", () => {
 
 	afterEach(async () => {
 		if (tempDir) {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 

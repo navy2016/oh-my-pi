@@ -83,7 +83,7 @@ function createCodexFetchMock(sse: string, onRequest: (captured: CapturedCodexRe
 }
 
 describe("openai-codex reasoning.context", () => {
-	it("forwards an explicit reasoning.context and defaults to all_turns", async () => {
+	it("forwards an explicit reasoning.context and omits it by default", async () => {
 		const model = createCodexModel("gpt-5.1-codex");
 
 		const explicit = await transformRequestBody({ model: model.id }, model, {
@@ -92,8 +92,8 @@ describe("openai-codex reasoning.context", () => {
 		});
 		expect(explicit.reasoning?.context).toBe("current_turn");
 
-		const defaulted = await transformRequestBody({ model: model.id }, model, { reasoningEffort: "medium" });
-		expect(defaulted.reasoning?.context).toBe("all_turns");
+		const omitted = await transformRequestBody({ model: model.id }, model, { reasoningEffort: "medium" });
+		expect(omitted.reasoning?.context).toBeUndefined();
 	});
 
 	it("defaults reasoning.context to all_turns under Responses Lite unless overridden", async () => {

@@ -1,6 +1,5 @@
 import { hostMatchesUrl } from "@oh-my-pi/pi-catalog/hosts";
-import { $flag, logger, structuredCloneJSON } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
+import { $flag, extractHttpStatusFromError, logger, structuredCloneJSON } from "@oh-my-pi/pi-utils";
 import { getEnvApiKey } from "../stream";
 import type {
 	AssistantMessage,
@@ -25,7 +24,7 @@ import {
 import { createAbortSourceTracker } from "../utils/abort";
 import { withEmptyCompletionRetry } from "../utils/empty-completion-retry";
 import { AssistantMessageEventStream } from "../utils/event-stream";
-import type { RawHttpRequestDump } from "../utils/http-inspector";
+import { finalizeErrorMessage, type RawHttpRequestDump, rewriteCopilotError } from "../utils/http-inspector";
 import {
 	getOpenAIStreamFirstEventTimeoutMs,
 	getOpenAIStreamIdleTimeoutMs,
@@ -98,7 +97,6 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ServiceTier;
-	textVerbosity?: "low" | "medium" | "high";
 	toolChoice?: ToolChoice;
 	openrouterVariant?: string;
 	maxTokensExplicit?: boolean;
@@ -271,7 +269,7 @@ function buildOpenAIResponsesChainedParams(
 			? { ...params, input: params.input.slice(0, params.input.length - trailingScaffoldingItems) }
 			: params;
 	const deltaInput = chain.canAppend
-		? buildResponsesDeltaInput(chain.lastParams, chain.lastResponseItems, historyParams)
+		? buildResponsesDeltaInput<ResponseInput[number]>(chain.lastParams, chain.lastResponseItems, historyParams)
 		: null;
 	if (deltaInput && deltaInput.length > 0 && chain.lastResponseId) {
 		const scaffolding =
@@ -364,7 +362,7 @@ const streamOpenAIResponsesOnce = (
 
 	// Start async processing
 	(async () => {
-		const startTime = performance.now();
+		const startTime = Date.now();
 		let firstTokenTime: number | undefined;
 
 		const output: AssistantMessage = createInitialResponsesAssistantMessage(model.api, model.provider, model.id);
@@ -372,7 +370,7 @@ const streamOpenAIResponsesOnce = (
 		let chainState: OpenAIResponsesChainState | undefined;
 		let sentPreviousResponseId: string | undefined;
 		const abortTracker = createAbortSourceTracker(options?.signal);
-		const firstEventTimeoutAbortError = new AIError.StreamTimeoutError(OPENAI_RESPONSES_FIRST_EVENT_TIMEOUT_MESSAGE);
+		const firstEventTimeoutAbortError = new Error(OPENAI_RESPONSES_FIRST_EVENT_TIMEOUT_MESSAGE);
 		const { requestAbortController, requestSignal } = abortTracker;
 		const onSseEvent = options?.onSseEvent;
 		const rawSseObserver = onSseEvent
@@ -667,7 +665,7 @@ const streamOpenAIResponsesOnce = (
 			});
 			await processResponsesStream(timedOpenaiStream, output, stream, model, {
 				onFirstToken: () => {
-					if (!firstTokenTime) firstTokenTime = performance.now();
+					if (!firstTokenTime) firstTokenTime = Date.now();
 				},
 				onOutputItemDone: item => {
 					// `processResponsesStream` hands over a private clone already; no
@@ -680,12 +678,12 @@ const streamOpenAIResponsesOnce = (
 				requestServiceTier: options?.serviceTier,
 			});
 
-			const localAbortReason = abortTracker.getLocalAbortReason();
-			if (localAbortReason) {
-				throw localAbortReason;
+			const firstEventTimeoutError = abortTracker.getLocalAbortReason();
+			if (firstEventTimeoutError) {
+				throw firstEventTimeoutError;
 			}
 			if (abortTracker.wasCallerAbort()) {
-				throw new AIError.AbortError();
+				throw new Error("Request was aborted");
 			}
 
 			// Detect premature stream closure: the HTTP stream ended without the
@@ -694,17 +692,11 @@ const streamOpenAIResponsesOnce = (
 			// this guard the incomplete output is silently surfaced as a successful
 			// "stop".
 			if (!sawTerminalResponseEvent) {
-				throw new AIError.ProviderResponseError(
-					"OpenAI responses stream closed before a terminal response event was received",
-					{ provider: model.provider, kind: "incomplete-stream" },
-				);
+				throw new Error("OpenAI responses stream closed before a terminal response event was received");
 			}
 
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new AIError.ProviderResponseError(output.errorMessage ?? "An unknown error occurred", {
-					provider: model.provider,
-					kind: "runtime",
-				});
+				throw new Error(output.errorMessage ?? "An unknown error occurred");
 			}
 
 			output.providerPayload = createOpenAIResponsesHistoryPayload(model.provider, nativeOutputItems);
@@ -733,28 +725,25 @@ const streamOpenAIResponsesOnce = (
 				}
 			}
 
-			output.duration = performance.now() - startTime;
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const block of output.content) delete (block as { index?: number }).index;
 			if (chainState) resetOpenAIResponsesChainState(chainState);
+			const firstEventTimeoutError = abortTracker.getLocalAbortReason();
+			output.stopReason = abortTracker.wasCallerAbort() ? "aborted" : "error";
 			const capturedErrorResponse = error instanceof OpenAIHttpError ? error.captured : undefined;
-			const result = await AIError.finalize(error, {
-				api: model.api,
-				provider: model.provider,
-				abortTracker,
-				rawRequestDump,
-				capturedErrorResponse,
-			});
-			output.stopReason = result.stopReason;
-			output.errorStatus = result.status;
-			output.errorId = result.id;
-			output.errorMessage = result.message;
+			output.errorStatus = extractHttpStatusFromError(error) ?? capturedErrorResponse?.status;
+			output.errorMessage =
+				firstEventTimeoutError?.message ??
+				(await finalizeErrorMessage(error, rawRequestDump, capturedErrorResponse));
 			// Some providers via OpenRouter include extra details here.
 			const rawMetadata = (error as { error?: { metadata?: { raw?: string } } })?.error?.metadata?.raw;
 			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
-			output.duration = performance.now() - startTime;
+			output.errorMessage = rewriteCopilotError(output.errorMessage, error, model.provider);
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
@@ -772,16 +761,6 @@ const streamOpenAIResponsesOnce = (
  */
 export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (model, context, options) =>
 	withEmptyCompletionRetry(model, context, options, streamOpenAIResponsesOnce);
-
-function isOfficialOpenAIResponsesEndpoint(model: Model<"openai-responses">): boolean {
-	if (model.provider !== "openai") return false;
-	if (!model.baseUrl) return true;
-	try {
-		return new URL(model.baseUrl).hostname === "api.openai.com";
-	} catch {
-		return false;
-	}
-}
 
 export function buildParams(
 	model: Model<"openai-responses">,
@@ -870,9 +849,6 @@ export function buildParams(
 	});
 
 	applyCommonResponsesSamplingParams(params, { ...options, maxTokens: outputToken?.value }, model);
-	if (options?.textVerbosity && isOfficialOpenAIResponsesEndpoint(model)) {
-		params.text = { ...params.text, verbosity: options.textVerbosity };
-	}
 	// TODO: openai responses has no top-level `stop`/`stop_sequences`; surface via reasoning.stop?
 	// `StreamOptions.stopSequences` is intentionally dropped for this provider.
 	// TODO: openai responses has no top-level `frequency_penalty` field as of the current SDK;
@@ -936,9 +912,7 @@ export function buildParams(
  * runtime path only consumes that metadata.
  * @internal Exported for tests.
  */
-export function supportsFreeformApplyPatch(
-	model: Model<"openai-responses" | "azure-openai-responses" | "openai-codex-responses">,
-): boolean {
+export function supportsFreeformApplyPatch(model: Model<"openai-responses">): boolean {
 	return model.applyPatchToolType === "freeform";
 }
 
@@ -972,7 +946,7 @@ export function mapOpenAIResponsesToolChoiceForTools(
 export function convertTools(
 	tools: Tool[],
 	strictMode: boolean,
-	model: Model<"openai-responses" | "azure-openai-responses" | "openai-codex-responses">,
+	model: Model<"openai-responses">,
 	onQuarantine: (toolName: string, schemaPath: string) => void = (toolName, schemaPath) =>
 		logger.warn(
 			`Tool "${toolName}" omitted from the openai-responses request: its parameter schema is invalid for this provider at ${schemaPath} (an enum/const value cannot match its declared type). Other tools are unaffected.`,

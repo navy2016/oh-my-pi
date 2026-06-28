@@ -43,7 +43,6 @@
  */
 
 import { registerCustomApi } from "../api-registry";
-import * as AIError from "../error";
 import type {
 	Api,
 	AssistantMessage,
@@ -243,7 +242,7 @@ export function streamMock(
 	if (!isMockModel(model)) {
 		queueMicrotask(() => {
 			stream.fail(
-				new AIError.ValidationError(
+				new Error(
 					"streamMock called with a model not produced by createMockModel(). " + "Pass a MockModel instance.",
 				),
 			);
@@ -289,7 +288,6 @@ async function runMock(
 	options: SimpleStreamOptions | undefined,
 ): Promise<void> {
 	const startedAt = Date.now();
-	const perfStart = performance.now();
 
 	let handler: MockHandler | undefined;
 	try {
@@ -301,7 +299,7 @@ async function runMock(
 
 	if (handler === undefined) {
 		stream.fail(
-			new AIError.ValidationError(
+			new Error(
 				`Mock model "${model.id}" received call ${model.calls.length} but no response or handler is configured.`,
 			),
 		);
@@ -340,7 +338,7 @@ async function runMock(
 		try {
 			await sleep(response.delayMs, options?.signal);
 		} catch {
-			emitTerminalError(stream, model, startedAt, perfStart, "aborted", "Mock aborted during delay.");
+			emitTerminalError(stream, model, startedAt, "aborted", "Mock aborted during delay.");
 			return;
 		}
 	}
@@ -352,7 +350,7 @@ async function runMock(
 				: response.throw instanceof Error
 					? response.throw.message
 					: String(response.throw);
-		emitTerminalError(stream, model, startedAt, perfStart, "error", message);
+		emitTerminalError(stream, model, startedAt, "error", message);
 		return;
 	}
 
@@ -399,7 +397,7 @@ async function runMock(
 	partial.stopDetails = response.stopDetails;
 	partial.errorMessage = response.errorMessage;
 	partial.usage = mergeUsage(response.usage);
-	partial.duration = performance.now() - perfStart;
+	partial.duration = Date.now() - startedAt;
 
 	if (reason === "aborted" || reason === "error") {
 		stream.push({
@@ -462,7 +460,6 @@ function emitTerminalError(
 	stream: AssistantMessageEventStream,
 	model: Model<Api>,
 	startedAt: number,
-	perfStart: number,
 	reason: "aborted" | "error",
 	message: string,
 ): void {
@@ -476,7 +473,7 @@ function emitTerminalError(
 		stopReason: reason as StopReason,
 		errorMessage: message,
 		timestamp: startedAt,
-		duration: performance.now() - perfStart,
+		duration: Date.now() - startedAt,
 	};
 	stream.push({ type: "start", partial: failure });
 	stream.push({ type: "error", reason, error: failure });
@@ -491,7 +488,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	const onAbort = () => {
 		clearTimeout(timer);
 		signal?.removeEventListener("abort", onAbort);
-		reject(signal?.reason ?? new AIError.AbortError("aborted"));
+		reject(signal?.reason ?? new Error("aborted"));
 	};
 	const timer = setTimeout(() => {
 		signal?.removeEventListener("abort", onAbort);

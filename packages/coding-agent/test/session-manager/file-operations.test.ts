@@ -6,7 +6,7 @@ import type { FileEntry, SessionHeader } from "@oh-my-pi/pi-coding-agent/session
 import { findMostRecentSession, resolveResumableSession } from "@oh-my-pi/pi-coding-agent/session/session-listing";
 import { loadEntriesFromFile } from "@oh-my-pi/pi-coding-agent/session/session-loader";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { getConfigRootDir, getSessionsDir, removeSyncWithRetries, Snowflake, setAgentDir } from "@oh-my-pi/pi-utils";
+import { getConfigRootDir, getSessionsDir, Snowflake, setAgentDir } from "@oh-my-pi/pi-utils";
 
 describe("loadEntriesFromFile", () => {
 	let tempDir: string;
@@ -17,7 +17,7 @@ describe("loadEntriesFromFile", () => {
 	});
 
 	afterEach(() => {
-		removeSyncWithRetries(tempDir);
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	it("loads valid session file", async () => {
@@ -55,7 +55,7 @@ describe("findMostRecentSession", () => {
 	});
 
 	afterEach(() => {
-		removeSyncWithRetries(tempDir);
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	it("returns single valid session file", async () => {
@@ -99,7 +99,7 @@ describe("resolveResumableSession", () => {
 	});
 
 	afterEach(() => {
-		removeSyncWithRetries(tempDir);
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	function writeSession(fileName: string, headerCwd: string, id: string = Snowflake.next()): string {
@@ -185,7 +185,7 @@ describe("SessionManager temp cwd session dirs", () => {
 			setAgentDir(fallbackAgentDir);
 			delete process.env.PI_CODING_AGENT_DIR;
 		}
-		removeSyncWithRetries(testAgentDir);
+		fs.rmSync(testAgentDir, { recursive: true, force: true });
 	});
 
 	it("stores temp-root cwd sessions under -tmp-prefixed directories", () => {
@@ -251,7 +251,7 @@ describe("SessionManager legacy session migration persistence", () => {
 	});
 
 	afterEach(() => {
-		removeSyncWithRetries(tempDir);
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	it("keeps legacy migration in memory until later persisted activity rewrites the file", async () => {

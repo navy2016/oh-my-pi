@@ -1,7 +1,6 @@
 import { logger } from "@oh-my-pi/pi-utils";
 import { type } from "arktype";
 import { captureRequestHeaders, resolvePromptCacheKey } from "../auth-gateway/http";
-import * as AIError from "../error";
 import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
@@ -294,7 +293,7 @@ function deriveCacheRetention(data: {
 export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 	const data = anthropicMessagesRequestSchema(body);
 	if (data instanceof type.errors) {
-		throw new AIError.ValidationError(`anthropic-messages: ${data.summary}`);
+		throw new Error(`anthropic-messages: ${data.summary}`);
 	}
 
 	const now = Date.now();
@@ -458,13 +457,7 @@ function encodeUsage(message: AssistantMessage): Record<string, unknown> {
 
 export function encodeResponse(message: AssistantMessage, requestedModelId: string): Record<string, unknown> {
 	if (message.stopReason === "error" || message.stopReason === "aborted") {
-		throw new AIError.ProviderResponseError(
-			message.errorMessage ?? `anthropic-messages: upstream ${message.stopReason}`,
-			{
-				provider: "anthropic",
-				kind: "output",
-			},
-		);
+		throw new Error(message.errorMessage ?? `anthropic-messages: upstream ${message.stopReason}`);
 	}
 	return {
 		id: message.responseId ?? newMessageId(),

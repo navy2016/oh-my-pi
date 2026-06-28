@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import { $ } from "bun";
 import * as git from "../../src/utils/git";
 
@@ -42,7 +41,7 @@ describe("git reference directory fallback", () => {
 		expect(packedRefs).toContain("refs/heads/pi-flash");
 
 		// Delete the loose ref file for refs/heads/pi-flash if git pack-refs didn't already delete it (it usually does).
-		await removeWithRetries(path.join(repoDir, ".git", "refs", "heads", "pi-flash"));
+		await fs.rm(path.join(repoDir, ".git", "refs", "heads", "pi-flash"), { force: true });
 
 		// Now, create refs/heads/pi-flash as a directory to simulate another branch like "pi-flash/feature" existing.
 		// We can just create the directory and a file inside it, or just the directory.
@@ -51,7 +50,7 @@ describe("git reference directory fallback", () => {
 	});
 
 	afterAll(async () => {
-		await removeWithRetries(repoDir).catch(() => {});
+		await fs.rm(repoDir, { recursive: true, force: true }).catch(() => {});
 	});
 
 	test("resolves branch that has directory conflict via resolveSync on head", () => {

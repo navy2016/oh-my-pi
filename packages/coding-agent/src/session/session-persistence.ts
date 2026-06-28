@@ -110,8 +110,9 @@ function truncateForPersistence(obj: unknown, blobStore: BlobStore, key?: string
 		const entries: Array<readonly [string, unknown]> = [];
 		for (const [childKey, value] of Object.entries(obj)) {
 			// Strip transient/redundant properties that shouldn't be persisted.
+			// - partialJson: streaming accumulator for tool call JSON parsing
 			// - jsonlEvents: raw subprocess streaming events (already saved to artifact files)
-			if (childKey === "jsonlEvents") {
+			if (childKey === "partialJson" || childKey === "jsonlEvents") {
 				changed = true;
 				continue;
 			}

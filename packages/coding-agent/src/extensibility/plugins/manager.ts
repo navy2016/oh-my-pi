@@ -11,12 +11,9 @@ import {
 	isEnoent,
 	logger,
 } from "@oh-my-pi/pi-utils";
-import { withExitGuard } from "../utils";
 import { type GitSource, parseGitUrl } from "./git-url";
 import { installLegacyPiSpecifierShim, loadLegacyPiModule } from "./legacy-pi-compat";
 import { resolvePluginManifestEntries } from "./loader";
-import { getInstalledPluginsRegistryPath, readInstalledPluginsRegistry } from "./marketplace/registry";
-import { parsePluginId } from "./marketplace/types";
 import { extractPackageName, parsePluginSpec } from "./parser";
 import { normalizePluginRuntimeConfig } from "./runtime-config";
 import type {
@@ -109,9 +106,6 @@ interface PluginPackageSnapshot {
 	readonly backupPath: string;
 }
 
-interface RuntimePackageJson {
-	name?: unknown;
-}
 // =============================================================================
 // Plugin Manager
 // =============================================================================
@@ -221,64 +215,6 @@ export class PluginManager {
 		}
 		return installedNames;
 	}
-	async #collectMarketplaceRuntimePackageRealpaths(): Promise<Map<string, Set<string>>> {
-		const registry = await readInstalledPluginsRegistry(getInstalledPluginsRegistryPath());
-		const packageRealpaths = new Map<string, Set<string>>();
-		await Promise.all(
-			Object.entries(registry.plugins).flatMap(([pluginId, entries]) =>
-				entries.map(async entry => {
-					// Legacy registries written before `scope` was added omit the field;
-					// `listClaudePluginRoots` treats those as user-scoped, so do the same.
-					if ((entry.scope ?? "user") !== "user") return;
-					const packageJsonPath = path.join(entry.installPath, "package.json");
-					const parsedId = parsePluginId(pluginId);
-					let packageName = parsedId?.name ?? pluginId;
-					try {
-						const pkg: RuntimePackageJson = await Bun.file(packageJsonPath).json();
-						if (typeof pkg.name === "string" && pkg.name.length > 0) {
-							packageName = pkg.name;
-						}
-					} catch (err) {
-						if (!isEnoent(err)) {
-							logger.debug("Failed to inspect marketplace plugin package path", {
-								path: entry.installPath,
-								error: String(err),
-							});
-							return;
-						}
-					}
-
-					try {
-						const installRealpath = await fs.promises.realpath(entry.installPath);
-						const realpaths = packageRealpaths.get(packageName) ?? new Set<string>();
-						realpaths.add(installRealpath);
-						packageRealpaths.set(packageName, realpaths);
-					} catch (err) {
-						if (isEnoent(err)) return;
-						throw err;
-					}
-				}),
-			),
-		);
-		return packageRealpaths;
-	}
-
-	async #isMarketplaceRuntimeLink(
-		name: string,
-		deps: Record<string, string>,
-		marketplaceRuntimeRealpaths: Map<string, Set<string>>,
-		pluginPath: string,
-	): Promise<boolean> {
-		if (name in deps) return false;
-		const realpaths = marketplaceRuntimeRealpaths.get(name);
-		if (!realpaths) return false;
-		try {
-			return realpaths.has(await fs.promises.realpath(pluginPath));
-		} catch (err) {
-			if (isEnoent(err)) return false;
-			throw err;
-		}
-	}
 
 	async #snapshotInstalledPackage(actualName: string | undefined): Promise<PluginPackageSnapshot | null> {
 		if (!actualName) {
@@ -364,7 +300,7 @@ export class PluginManager {
 			installLegacyPiSpecifierShim();
 			for (const extensionPath of loadable) {
 				try {
-					const module = await withExitGuard(() => loadLegacyPiModule(extensionPath));
+					const module = await loadLegacyPiModule(extensionPath);
 					if (!hasExtensionFactoryExport(module)) {
 						errors.push(`${extensionPath}: extension does not export a valid factory function`);
 					}
@@ -633,16 +569,13 @@ export class PluginManager {
 			if (!isEnoent(err)) throw err;
 		}
 
-		const [projectOverrides, config, marketplaceRuntimeRealpaths] = await Promise.all([
-			this.#loadProjectOverrides(),
-			this.#ensureConfigLoaded(),
-			this.#collectMarketplaceRuntimePackageRealpaths(),
-		]);
+		const projectOverrides = await this.#loadProjectOverrides();
+		const config = await this.#ensureConfigLoaded();
 		const plugins: InstalledPlugin[] = [];
 		const installedNames = this.#collectInstalledNames(deps, config);
+
 		for (const name of installedNames) {
 			const pluginPath = path.join(getPluginsNodeModules(), name);
-			if (await this.#isMarketplaceRuntimeLink(name, deps, marketplaceRuntimeRealpaths, pluginPath)) continue;
 			const pluginPkgPath = path.join(pluginPath, "package.json");
 			let pluginPkg: { version: string; omp?: PluginManifest; pi?: PluginManifest };
 			try {
@@ -883,15 +816,11 @@ export class PluginManager {
 		});
 
 		const deps = pkg.dependencies || {};
-		const [config, marketplaceRuntimeRealpaths] = await Promise.all([
-			this.#ensureConfigLoaded(),
-			this.#collectMarketplaceRuntimePackageRealpaths(),
-		]);
+		const config = await this.#ensureConfigLoaded();
 		const installedNames = this.#collectInstalledNames(deps, config);
 
 		for (const name of installedNames) {
 			const pluginPath = path.join(nodeModulesPath, name);
-			if (await this.#isMarketplaceRuntimeLink(name, deps, marketplaceRuntimeRealpaths, pluginPath)) continue;
 			const pluginPkgPath = path.join(pluginPath, "package.json");
 			const fromDependencies = name in deps;
 

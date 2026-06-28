@@ -16,7 +16,7 @@
  * itself stays credential-free.
  */
 import { readSseJson } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
+import { ProviderHttpError } from "../errors";
 import type {
 	Api,
 	AssistantMessage,
@@ -59,7 +59,19 @@ function buildWireOptions(options: SimpleStreamOptions | undefined): Record<stri
 	return wire;
 }
 
-async function decodeGatewayError(response: Response): Promise<AIError.AuthGatewayError> {
+/**
+ * Non-2xx response from the auth-gateway `/v1/pi/stream` endpoint. `code`
+ * carries the gateway's error-type token (`authentication_error`,
+ * `rate_limit_error`, `upstream_error`, ...).
+ */
+export class AuthGatewayError extends ProviderHttpError {
+	constructor(message: string, status: number, headers?: Headers, code?: string) {
+		super(message, status, { headers, code });
+		this.name = "AuthGatewayError";
+	}
+}
+
+async function decodeGatewayError(response: Response): Promise<AuthGatewayError> {
 	const status = response.status;
 	let body: unknown;
 	try {
@@ -72,7 +84,7 @@ async function decodeGatewayError(response: Response): Promise<AIError.AuthGatew
 		if (typeof err === "object" && err !== null) {
 			const message = (err as { message?: unknown }).message;
 			const type = (err as { type?: unknown }).type;
-			return new AIError.AuthGatewayError(
+			return new AuthGatewayError(
 				typeof message === "string" ? message : `auth-gateway ${status}`,
 				status,
 				response.headers,
@@ -81,11 +93,7 @@ async function decodeGatewayError(response: Response): Promise<AIError.AuthGatew
 		}
 	}
 	const text = typeof body === "string" ? body : JSON.stringify(body);
-	return new AIError.AuthGatewayError(
-		`auth-gateway ${status}: ${text || response.statusText}`,
-		status,
-		response.headers,
-	);
+	return new AuthGatewayError(`auth-gateway ${status}: ${text || response.statusText}`, status, response.headers);
 }
 
 /**
@@ -96,7 +104,7 @@ async function decodeGatewayError(response: Response): Promise<AIError.AuthGatew
  */
 function resolveStreamUrl(model: Model<Api>): string {
 	if (!model.baseUrl) {
-		throw new AIError.ConfigurationError(
+		throw new Error(
 			`pi-native transport requires \`baseUrl\` on model ${model.id} (set it on the provider config in models.yml)`,
 		);
 	}
@@ -171,9 +179,7 @@ export function streamPiNative<TApi extends Api>(
 				return;
 			}
 			if (!response.body) {
-				stream.fail(
-					new AIError.AuthGatewayError("auth-gateway returned empty body", response.status, response.headers),
-				);
+				stream.fail(new Error("auth-gateway returned empty body"));
 				return;
 			}
 

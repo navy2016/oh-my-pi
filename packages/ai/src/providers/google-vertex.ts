@@ -1,5 +1,4 @@
 import { $env } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
 import type { Context, Model, StreamFunction } from "../types";
 import type { AssistantMessageEventStream } from "../utils/event-stream";
 import { getVertexAccessToken } from "./google-auth";
@@ -70,7 +69,7 @@ function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 function resolveProject(options?: GoogleVertexOptions): string {
 	const project = options?.project || $env.GOOGLE_CLOUD_PROJECT || $env.GCP_PROJECT || $env.GCLOUD_PROJECT;
 	if (!project) {
-		throw new AIError.ConfigurationError(
+		throw new Error(
 			"Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCP_PROJECT/GCLOUD_PROJECT or pass project in options.",
 		);
 	}
@@ -84,7 +83,7 @@ function resolveLocation(options?: GoogleVertexOptions): string {
 	const location =
 		options?.location || $env.GOOGLE_VERTEX_LOCATION || $env.GOOGLE_CLOUD_LOCATION || $env.VERTEX_LOCATION;
 	if (!location) {
-		throw new AIError.ConfigurationError(
+		throw new Error(
 			"Vertex AI requires a location. Set GOOGLE_VERTEX_LOCATION/GOOGLE_CLOUD_LOCATION/VERTEX_LOCATION or pass location in options.",
 		);
 	}

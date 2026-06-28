@@ -1,5 +1,5 @@
 /**
- * Internal URL router for internal protocols (`agent://`, `artifact://`, `history://`, `issue://`, `local://`, `mcp://`, `memory://`, `omp://`, `pr://`, `rule://`, `skill://`, `ssh://`, and `vault://`).
+ * Internal URL router for internal protocols (`agent://`, `artifact://`, `history://`, `issue://`, `local://`, `mcp://`, `memory://`, `omp://`, `pr://`, `rule://`, `skill://`, and `vault://`).
  *
  * One process-global router with one handler per scheme. Access via
  * `InternalUrlRouter.instance()`. Handlers are stateless; per-session and
@@ -16,7 +16,6 @@ import { OmpProtocolHandler } from "./omp-protocol";
 import { parseInternalUrl } from "./parse";
 import { RuleProtocolHandler } from "./rule-protocol";
 import { SkillProtocolHandler } from "./skill-protocol";
-import { SshProtocolHandler } from "./ssh-protocol";
 import type { InternalResource, InternalUrl, ProtocolHandler, ResolveContext, UrlCompletion } from "./types";
 import { VaultProtocolHandler } from "./vault-protocol";
 
@@ -38,7 +37,6 @@ export class InternalUrlRouter {
 		this.register(new IssueProtocolHandler());
 		this.register(new PrProtocolHandler());
 		this.register(new HistoryProtocolHandler());
-		this.register(new SshProtocolHandler());
 	}
 
 	/** Process-global router instance. */
@@ -83,10 +81,10 @@ export class InternalUrlRouter {
 	 * Candidate completions for the host/path portion of `scheme://<query>`.
 	 * Returns `null` when the scheme is unknown or does not support completion.
 	 */
-	async complete(scheme: string, query: string, context?: ResolveContext): Promise<UrlCompletion[] | null> {
+	async complete(scheme: string, query: string): Promise<UrlCompletion[] | null> {
 		const handler = this.#handlers.get(scheme.toLowerCase());
 		if (!handler?.complete) return null;
-		return handler.complete(query, context);
+		return handler.complete(query);
 	}
 
 	async resolve(input: string, context?: ResolveContext): Promise<InternalResource> {

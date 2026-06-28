@@ -7,7 +7,6 @@ import {
 	resolvePluginToolPaths,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/loader";
 import type { InstalledPlugin, PluginManifest } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/types";
-import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
 
 function makePlugin(pluginPath: string, manifest: PluginManifest): InstalledPlugin {
 	return {
@@ -44,7 +43,7 @@ describe("plugin manifest path resolution", () => {
 			expect(resolvePluginToolPaths(plugin)).toEqual([path.join(dir, "index.ts")]);
 			expect(resolvePluginExtensionPaths(plugin)).toEqual([path.join(dir, "ext.ts")]);
 		} finally {
-			removeSyncWithRetries(dir);
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 });

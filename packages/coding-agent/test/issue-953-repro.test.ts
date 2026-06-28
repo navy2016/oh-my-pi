@@ -16,7 +16,6 @@ function createCtx(usage: Partial<SegmentContext["usageStats"]>): SegmentContext
 			sessionManager: undefined,
 		} as unknown as SegmentContext["session"],
 		width: 120,
-		compactThinkingLevel: false,
 		options: {},
 		planMode: null,
 		loopMode: null,
@@ -37,8 +36,7 @@ function createCtx(usage: Partial<SegmentContext["usageStats"]>): SegmentContext
 		contextWindow: 0,
 		autoCompactEnabled: false,
 		subagentCount: 0,
-		activeMs: 0,
-		activeRepo: null,
+		sessionStartTime: Date.now(),
 		git: {
 			branch: null,
 			status: null,

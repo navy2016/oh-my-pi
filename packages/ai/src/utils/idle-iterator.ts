@@ -1,5 +1,4 @@
 import { $env } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
 const DEFAULT_STREAM_FIRST_EVENT_TIMEOUT_MS = 100_000;
@@ -293,7 +292,7 @@ export async function* iterateWithIdleTimeout<T>(
 					if (activeTimeoutMs <= 0) {
 						options.onFirstItemTimeout?.();
 						closeIterator();
-						throw new AIError.StreamTimeoutError(options.firstItemErrorMessage ?? options.errorMessage);
+						throw new Error(options.firstItemErrorMessage ?? options.errorMessage);
 					}
 				}
 			} else if (options.idleTimeoutMs !== undefined && options.idleTimeoutMs > 0) {
@@ -301,7 +300,7 @@ export async function* iterateWithIdleTimeout<T>(
 				if (activeTimeoutMs <= 0) {
 					options.onIdle?.();
 					closeIterator();
-					throw new AIError.StreamTimeoutError(options.errorMessage);
+					throw new Error(options.errorMessage);
 				}
 			}
 
@@ -344,7 +343,7 @@ export async function* iterateWithIdleTimeout<T>(
 						options.onFirstItemTimeout?.();
 					}
 					closeIterator();
-					throw new AIError.StreamTimeoutError(
+					throw new Error(
 						!awaitingFirstItem ? options.errorMessage : (options.firstItemErrorMessage ?? options.errorMessage),
 					);
 				}
@@ -468,6 +467,6 @@ export async function* iterateWithTerminalGrace<T>(
 function abortReason(signal: AbortSignal): Error {
 	const reason = signal.reason;
 	if (reason instanceof Error) return reason;
-	if (typeof reason === "string") return new AIError.AbortError(reason);
-	return new AIError.AbortError();
+	if (typeof reason === "string") return new Error(reason);
+	return new Error("Request was aborted");
 }

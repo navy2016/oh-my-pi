@@ -228,9 +228,7 @@ export type SymbolKey =
 	| "tool.review"
 	| "tool.inspectImage"
 	| "tool.goal"
-	| "tool.irc"
-	| "tool.delete"
-	| "tool.move";
+	| "tool.irc";
 
 type SymbolMap = Record<SymbolKey, string>;
 
@@ -432,8 +430,6 @@ const UNICODE_SYMBOLS: SymbolMap = {
 	"tool.inspectImage": "🖼",
 	"tool.goal": "◎",
 	"tool.irc": "✉",
-	"tool.delete": "🗑",
-	"tool.move": "➜",
 };
 
 const NERD_SYMBOLS: SymbolMap = {
@@ -739,8 +735,6 @@ const NERD_SYMBOLS: SymbolMap = {
 	"tool.inspectImage": "\uEAEA",
 	"tool.goal": "\uEBF8",
 	"tool.irc": "\uF086",
-	"tool.delete": "\uf12d",
-	"tool.move": "\uf061",
 };
 
 const ASCII_SYMBOLS: SymbolMap = {
@@ -939,8 +933,6 @@ const ASCII_SYMBOLS: SymbolMap = {
 	"tool.inspectImage": "[i]",
 	"tool.goal": "(o)",
 	"tool.irc": "irc",
-	"tool.delete": "rm",
-	"tool.move": "mv",
 };
 
 const SYMBOL_PRESETS: Record<SymbolPreset, SymbolMap> = {

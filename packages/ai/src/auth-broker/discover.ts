@@ -15,7 +15,6 @@ import {
 } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
 import { AuthStorage } from "../auth-storage";
-import * as AIError from "../error";
 import { AuthBrokerClient } from "./client";
 import { RemoteAuthCredentialStore } from "./remote-store";
 import { readAuthBrokerSnapshotCache, writeAuthBrokerSnapshotCache } from "./snapshot-cache";
@@ -138,8 +137,7 @@ export async function resolveAuthBrokerConfig(
 	const token =
 		(envToken && envToken.length > 0 ? envToken : undefined) ?? configToken ?? (await readTokenFile()) ?? undefined;
 	if (!token) {
-		throw new AIError.MissingApiKeyError(
-			undefined,
+		throw new Error(
 			`OMP_AUTH_BROKER_URL is set (${url}) but no bearer token is available. ` +
 				`Set OMP_AUTH_BROKER_TOKEN, the \`auth.broker.token\` config entry, or place one at ${getAuthBrokerTokenFilePath()}.`,
 		);
@@ -192,10 +190,7 @@ export async function discoverAuthStorage(options: DiscoverAuthStorageOptions = 
 		}
 		if (!initialSnapshot) {
 			const initialResult = await client.fetchSnapshot();
-			if (initialResult.status !== 200)
-				throw new AIError.AuthBrokerError("Auth broker returned no initial snapshot", {
-					status: initialResult.status,
-				});
+			if (initialResult.status !== 200) throw new Error("Auth broker returned no initial snapshot");
 			initialSnapshot = initialResult.snapshot;
 			persist?.(initialSnapshot);
 		}

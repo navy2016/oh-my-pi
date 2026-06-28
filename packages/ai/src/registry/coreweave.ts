@@ -1,6 +1,5 @@
 import { coreWeaveProjectHeaders } from "@oh-my-pi/pi-catalog/wire/coreweave";
 import { $env } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
 import { createApiKeyLogin } from "./api-key-login";
 import type { OAuthLoginCallbacks } from "./oauth/types";
 import type { ProviderDefinition } from "./types";
@@ -11,7 +10,7 @@ const PROJECT_SETUP_INSTRUCTIONS =
 function requireCoreWeaveProjectHeaders(): Record<string, string> {
 	const headers = coreWeaveProjectHeaders($env);
 	if (!headers) {
-		throw new AIError.ConfigurationError(
+		throw new Error(
 			"CoreWeave Serverless Inference requires OpenAI-Project. Set COREWEAVE_PROJECT=<team>/<project> before running /login coreweave.",
 		);
 	}

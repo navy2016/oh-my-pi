@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { KeybindingsManager } from "@oh-my-pi/pi-coding-agent/config/keybindings";
 import { matchesAppFollowUp } from "@oh-my-pi/pi-coding-agent/modes/utils/keybinding-matchers";
 import { setKeybindings } from "@oh-my-pi/pi-tui";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
 
 function ctrl(key: string): string {
@@ -56,7 +55,7 @@ describe("KeybindingsManager.create", () => {
 			expect(writtenConfig).not.toHaveProperty("selectModelTemporary");
 			expect(await Bun.file(jsonPath).exists()).toBe(true);
 		} finally {
-			await removeWithRetries(agentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
 		}
 	});
 
@@ -93,7 +92,7 @@ describe("KeybindingsManager.create", () => {
 			});
 			expect(await Bun.file(jsonPath).exists()).toBe(true);
 		} finally {
-			await removeWithRetries(agentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
 		}
 	});
 
@@ -119,7 +118,7 @@ describe("KeybindingsManager.create", () => {
 			expect(manager.getKeys("app.session.fork")).toEqual(["ctrl+f"]);
 			expect(manager.getKeys("app.clipboard.copyPrompt")).toEqual(["alt+c", "ctrl+shift+c"]);
 		} finally {
-			await removeWithRetries(agentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
 		}
 	});
 
@@ -145,7 +144,7 @@ describe("KeybindingsManager.create", () => {
 			expect(manager.getKeys("app.plan.toggle")).toEqual(["alt+shift+p"]);
 			expect(await Bun.file(canonicalPath).exists()).toBe(false);
 		} finally {
-			await removeWithRetries(agentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
 		}
 	});
 
@@ -185,7 +184,7 @@ describe("KeybindingsManager.create", () => {
 			// of the box, without breaking users on Kitty/iTerm2/WezTerm/Ghostty.
 			expect(manager.getKeys("app.message.followUp")).toEqual(["ctrl+q", "ctrl+enter"]);
 		} finally {
-			await removeWithRetries(agentDir);
+			await fs.rm(agentDir, { recursive: true, force: true });
 		}
 	});
 

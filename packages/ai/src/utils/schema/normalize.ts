@@ -7,7 +7,6 @@
  * for each target.
  */
 import { logger } from "@oh-my-pi/pi-utils";
-import * as AIError from "../../error";
 import { dereferenceJsonSchema } from "./dereference";
 import { upgradeJsonSchemaTo202012 } from "./draft";
 import { areJsonValuesEqual, mergeCompatibleEnumSchemas, mergePropertySchemas } from "./equality";
@@ -1712,7 +1711,7 @@ export function enforceStrictSchema(
 	cache: WeakMap<Record<string, unknown>, Record<string, unknown>> = new WeakMap(),
 ): Record<string, unknown> {
 	if (!enter(schema)) {
-		throw new AIError.ValidationError("Schema contains a circular object graph — cannot enforce strict mode");
+		throw new Error("Schema contains a circular object graph — cannot enforce strict mode");
 	}
 	try {
 		const cached = cache.get(schema);
@@ -1858,7 +1857,7 @@ function enforceStrictSchemaBody(
 		!COMBINATOR_KEYS.some(key => Array.isArray(result[key])) &&
 		!isJsonObject(result.not)
 	) {
-		throw new AIError.ValidationError("Schema node has no type, combinator, or $ref — cannot enforce strict mode");
+		throw new Error("Schema node has no type, combinator, or $ref — cannot enforce strict mode");
 	}
 	return result;
 }

@@ -33,14 +33,14 @@ describe("/move slash command", () => {
 		expect(harness.handleMoveCommand).toHaveBeenCalledWith("/tmp/project");
 	});
 
-	it("routes a blank /move invocation to the interactive move handler", async () => {
+	it("handles a blank /move invocation without error", async () => {
 		const harness = createRuntime();
 
 		const handled = await executeBuiltinSlashCommand("/move   ", harness.runtime);
 
 		expect(handled).toBe(true);
-		expect(harness.showError).not.toHaveBeenCalled();
+		expect(harness.showError).toHaveBeenCalledWith("Usage: /move <path>");
 		expect(harness.setText).toHaveBeenCalledWith("");
-		expect(harness.handleMoveCommand).toHaveBeenCalledWith(undefined);
+		expect(harness.handleMoveCommand).not.toHaveBeenCalled();
 	});
 });

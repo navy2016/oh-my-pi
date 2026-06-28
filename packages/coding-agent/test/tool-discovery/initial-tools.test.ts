@@ -8,7 +8,6 @@ import {
 	createTools,
 	DEFAULT_ESSENTIAL_TOOL_NAMES,
 	filterInitialToolsForDiscoveryAll,
-	GithubTool,
 	IrcTool,
 	JobTool,
 	SshTool,
@@ -18,8 +17,8 @@ const allToolsSettings = Settings.isolated({
 	"astGrep.enabled": true,
 	"astEdit.enabled": true,
 	"debug.enabled": true,
-	"glob.enabled": true,
-	"grep.enabled": true,
+	"find.enabled": true,
+	"search.enabled": true,
 	"github.enabled": true,
 	"lsp.enabled": true,
 	"inspect_image.enabled": true,
@@ -48,7 +47,6 @@ async function getToolMetadata(): Promise<Map<string, { loadMode?: string; summa
 	const metadata = new Map(tools.map(tool => [tool.name, { loadMode: tool.loadMode, summary: tool.summary }]));
 	for (const tool of [
 		new AskTool({ ...toolSession, hasUI: true }),
-		new GithubTool(toolSession),
 		new SshTool(toolSession, [], new Map(), ""),
 		new JobTool(toolSession),
 		new IrcTool(toolSession),
@@ -100,13 +98,8 @@ describe("computeEssentialBuiltinNames", () => {
 	});
 
 	it("respects tools.essentialOverride when provided", () => {
-		const settings = Settings.isolated({ "tools.essentialOverride": ["read", "glob"] });
-		expect(computeEssentialBuiltinNames(settings).sort()).toEqual(["glob", "read"]);
-	});
-
-	it("maps legacy essential override tool names", () => {
-		const settings = Settings.isolated({ "tools.essentialOverride": ["read", "find", "search", "glob"] });
-		expect(computeEssentialBuiltinNames(settings).sort()).toEqual(["glob", "grep", "read"]);
+		const settings = Settings.isolated({ "tools.essentialOverride": ["read", "find"] });
+		expect(computeEssentialBuiltinNames(settings).sort()).toEqual(["find", "read"]);
 	});
 
 	it("filters override entries that are not known built-in tools", () => {
@@ -150,22 +143,22 @@ describe("filterInitialToolsForDiscoveryAll", () => {
 		read: "essential",
 		edit: "essential",
 		todo: "discoverable",
-		grep: "discoverable",
+		search: "discoverable",
 	};
 	const base = {
 		loadModeOf: (name: string): BuiltinToolLoadMode | undefined => loadModes[name],
-		essentialNames: new Set(["read", "bash", "edit", "write", "glob"]),
+		essentialNames: new Set(["read", "bash", "edit", "write", "find"]),
 		explicitlyRequested: new Set<string>(),
 		restored: new Set<string>(),
 		forceActive: new Set<string>(),
 	};
 
 	it("hides non-essential discoverable built-ins", () => {
-		expect(filterInitialToolsForDiscoveryAll(["read", "edit", "todo", "grep"], base)).toEqual(["read", "edit"]);
+		expect(filterInitialToolsForDiscoveryAll(["read", "edit", "todo", "search"], base)).toEqual(["read", "edit"]);
 	});
 
 	it("keeps discoverable tools required by a forced tool_choice (eager todo)", () => {
-		const result = filterInitialToolsForDiscoveryAll(["read", "todo", "grep"], {
+		const result = filterInitialToolsForDiscoveryAll(["read", "todo", "search"], {
 			...base,
 			forceActive: new Set(["todo"]),
 		});
@@ -173,15 +166,15 @@ describe("filterInitialToolsForDiscoveryAll", () => {
 	});
 
 	it("keeps explicitly requested and restored discoverable tools", () => {
-		const result = filterInitialToolsForDiscoveryAll(["todo", "grep"], {
+		const result = filterInitialToolsForDiscoveryAll(["todo", "search"], {
 			...base,
-			explicitlyRequested: new Set(["grep"]),
+			explicitlyRequested: new Set(["search"]),
 			restored: new Set(["todo"]),
 		});
-		expect([...result].sort()).toEqual(["grep", "todo"]);
+		expect([...result].sort()).toEqual(["search", "todo"]);
 	});
 
 	it("never hides tools without a built-in loadMode (MCP/custom/extension)", () => {
-		expect(filterInitialToolsForDiscoveryAll(["mcp__server__tool", "grep"], base)).toEqual(["mcp__server__tool"]);
+		expect(filterInitialToolsForDiscoveryAll(["mcp__server__tool", "search"], base)).toEqual(["mcp__server__tool"]);
 	});
 });

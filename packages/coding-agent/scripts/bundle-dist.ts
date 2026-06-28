@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 	// so embed the dashboard archive the same way compiled binaries do
 	// (scripts/build-binary.ts). Reset afterwards to keep the checked-in
 	// placeholder empty.
-	await runCommand(["bun", "--cwd=../stats", "run", "gen:stats"]);
+	await runCommand(["bun", "--cwd=../stats", "scripts/generate-client-bundle.ts", "--generate"]);
 	try {
 		await runCommand([
 			"bun",
@@ -97,7 +97,7 @@ async function main(): Promise<void> {
 			"./src/cli.ts",
 		]);
 	} finally {
-		await runCommand(["bun", "--cwd=../stats", "run", "gen:stats:reset"]);
+		await runCommand(["bun", "--cwd=../stats", "scripts/generate-client-bundle.ts", "--reset"]);
 	}
 	await ensureShebang();
 	const stat = await fs.stat(cliPath);

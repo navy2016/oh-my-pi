@@ -14,7 +14,7 @@ import {
 } from "@oh-my-pi/pi-catalog/wire/gemini-headers";
 import { extractHttpStatusFromError, fetchWithRetry, readSseJson } from "@oh-my-pi/pi-utils";
 import { type } from "arktype";
-import * as AIError from "../error";
+import { ProviderHttpError } from "../errors";
 import type {
 	Api,
 	AssistantMessage,
@@ -30,7 +30,7 @@ import type {
 import { normalizeSystemPrompts } from "../utils";
 import { AssistantMessageEventStream } from "../utils/event-stream";
 import { extractGoogleValidationUrl, formatGoogleValidationRequiredMessage } from "../utils/google-validation";
-import type { RawHttpRequestDump } from "../utils/http-inspector";
+import { appendRawHttpRequestDumpFor400, type RawHttpRequestDump } from "../utils/http-inspector";
 import { armPreResponseTimeout, getStreamFirstEventTimeoutMs } from "../utils/idle-iterator";
 // Refresh is the sole responsibility of AuthStorage (broker-aware, single-flighted);
 // the stream provider trusts the access token threaded through `options.apiKey`.
@@ -58,6 +58,11 @@ import {
  * `import { GoogleThinkingLevel } from "./google-gemini-cli"` callers keep working.
  */
 export type { GoogleThinkingLevel };
+
+/** Non-2xx response (or in-stream error chunk) from the Cloud Code Assist API. */
+export class GeminiCliApiError extends ProviderHttpError {
+	override readonly name = "GeminiCliApiError";
+}
 
 function isPlanningLeakPrefix(text: string): boolean {
 	const trimmed = text.trimStart();
@@ -340,6 +345,22 @@ function shouldInjectAntigravitySystemInstruction(modelId: string): boolean {
 	return normalized.includes("claude") || normalized.includes("gemini-3");
 }
 
+/**
+ * Extract a clean, user-friendly error message from Google API error response.
+ * Parses JSON error responses and returns just the message field.
+ */
+function extractErrorMessage(errorText: string): string {
+	try {
+		const parsed = JSON.parse(errorText) as { error?: { message?: string } };
+		if (parsed.error?.message) {
+			return parsed.error.message;
+		}
+	} catch {
+		// Not JSON, return as-is
+	}
+	return errorText;
+}
+
 const optionalCredentialString = type("unknown").pipe(raw => {
 	const out = type("string")(raw);
 	return out instanceof type.errors ? undefined : out;
@@ -385,16 +406,16 @@ export function parseGeminiCliCredentials(apiKeyRaw: string): ParsedGeminiCliCre
 	try {
 		rawCredentials = JSON.parse(apiKeyRaw);
 	} catch {
-		throw new AIError.ValidationError(invalidCredentialsMessage);
+		throw new Error(invalidCredentialsMessage);
 	}
 	const parsed = geminiCliCredentialsSchema(rawCredentials);
 	if (parsed instanceof type.errors) {
-		throw new AIError.ValidationError(invalidCredentialsMessage);
+		throw new Error(invalidCredentialsMessage);
 	}
 
 	const projectId = parsed.projectId ?? parsed.project_id;
 	if (parsed.token === undefined || projectId === undefined) {
-		throw new AIError.ValidationError(missingCredentialsMessage);
+		throw new Error(missingCredentialsMessage);
 	}
 
 	const refreshToken = parsed.refreshToken ?? parsed.refresh;
@@ -496,7 +517,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
-		const startTime = performance.now();
+		const startTime = Date.now();
 		let firstTokenTime: number | undefined;
 
 		const output: AssistantMessage = {
@@ -521,9 +542,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 		try {
 			const apiKeyRaw = options?.apiKey;
 			if (!apiKeyRaw) {
-				throw new AIError.ConfigurationError(
-					"Google Cloud Code Assist requires OAuth authentication. Use /login to authenticate.",
-				);
+				throw new Error("Google Cloud Code Assist requires OAuth authentication. Use /login to authenticate.");
 			}
 
 			const isAntigravity = model.provider === "google-antigravity";
@@ -539,9 +558,8 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 				parsedCredentials.expiresAt !== undefined &&
 				Date.now() >= parsedCredentials.expiresAt
 			) {
-				throw new AIError.OAuthError(
+				throw new Error(
 					"OAuth token expired before request — please retry; AuthStorage will refresh on the next attempt.",
-					{ kind: "token-refresh", provider: model.provider },
 				);
 			}
 			const baseUrl = model.baseUrl?.trim();
@@ -628,7 +646,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 			let lastResponseId: string | undefined;
 			const ensureStarted = () => {
 				if (!started) {
-					if (!firstTokenTime) firstTokenTime = performance.now();
+					if (!firstTokenTime) firstTokenTime = Date.now();
 					stream.push({ type: "start", partial: output });
 					started = true;
 				}
@@ -652,10 +670,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 
 			const streamResponse = async (activeResponse: Response): Promise<boolean> => {
 				if (!activeResponse.body) {
-					throw new AIError.ProviderResponseError("No response body", {
-						provider: model.provider,
-						kind: "empty-body",
-					});
+					throw new Error("No response body");
 				}
 
 				// Scoped per attempt so a failed/empty retry cannot leak its
@@ -691,17 +706,16 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 						const detail = chunk.error.message || chunk.error.status || "unknown error";
 						const message = `Cloud Code Assist stream error: ${detail}`;
 						throw typeof chunk.error.code === "number" && chunk.error.code >= 400
-							? new AIError.GeminiCliApiError(message, chunk.error.code)
-							: new AIError.ProviderResponseError(message, { provider: model.provider, kind: "runtime" });
+							? new GeminiCliApiError(message, chunk.error.code)
+							: new Error(message);
 					}
 					const responseData = chunk.response;
 					if (!responseData) continue;
 					if (responseData.responseId) lastResponseId = responseData.responseId;
 					if (!responseData.candidates?.length && responseData.promptFeedback?.blockReason) {
 						const detail = responseData.promptFeedback.blockReasonMessage;
-						throw new AIError.ProviderResponseError(
+						throw new Error(
 							`Request blocked by Google (${responseData.promptFeedback.blockReason})${detail ? `: ${detail}` : ""}`,
-							{ provider: model.provider, kind: "content-blocked" },
 						);
 					}
 
@@ -894,7 +908,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 					}
 
 					if (!response.ok) {
-						if (AIError.isTransientStatus(response.status)) {
+						if (response.status === 429 || (response.status >= 500 && response.status < 600)) {
 							if (!isLastEndpoint) {
 								continue;
 							}
@@ -907,8 +921,8 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 									"retry your request",
 									parsedCredentials.email,
 								)
-							: errorText;
-						throw new AIError.GeminiCliApiError(
+							: extractErrorMessage(errorText);
+						throw new GeminiCliApiError(
 							`Cloud Code Assist API error (${response.status}): ${errorMessage}`,
 							response.status,
 							{ headers: response.headers },
@@ -920,7 +934,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 
 					for (let emptyAttempt = 0; emptyAttempt <= MAX_EMPTY_STREAM_RETRIES; emptyAttempt++) {
 						if (options?.signal?.aborted) {
-							throw new AIError.AbortError("Request was aborted");
+							throw new Error("Request was aborted");
 						}
 
 						if (emptyAttempt > 0) {
@@ -928,11 +942,11 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 							try {
 								await scheduler.wait(backoffMs, { signal: options?.signal });
 							} catch {
-								throw new AIError.AbortError("Request was aborted");
+								throw new Error("Request was aborted");
 							}
 
 							if (!requestUrl) {
-								throw new AIError.ConfigurationError("Missing request URL");
+								throw new Error("Missing request URL");
 							}
 
 							currentResponse = await (options?.fetch ?? fetch)(requestUrl, {
@@ -944,7 +958,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 
 							if (!currentResponse.ok) {
 								const retryErrorText = await currentResponse.text();
-								throw new AIError.GeminiCliApiError(
+								throw new GeminiCliApiError(
 									`Cloud Code Assist API error (${currentResponse.status}): ${retryErrorText}`,
 									currentResponse.status,
 									{ headers: currentResponse.headers },
@@ -964,20 +978,16 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 					}
 
 					if (!receivedContent) {
-						throw new AIError.ProviderResponseError("Cloud Code Assist API returned an empty response", {
-							provider: model.provider,
-							kind: "empty-body",
-						});
+						throw new Error("Cloud Code Assist API returned an empty response");
 					}
 
 					if (options?.signal?.aborted) {
-						throw new AIError.AbortError("Request was aborted");
+						throw new Error("Request was aborted");
 					}
 
 					if (!sawFinishReason) {
-						throw new AIError.ProviderResponseError(
+						throw new Error(
 							"Cloud Code Assist stream ended without a finish reason (connection dropped or response truncated)",
-							{ provider: model.provider, kind: "incomplete-stream" },
 						);
 					}
 
@@ -997,7 +1007,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 					break;
 				} catch (error) {
 					const status = extractHttpStatusFromError(error);
-					if (AIError.isTransientStatus(status)) {
+					if (status === 429 || (status !== undefined && status >= 500 && status < 600)) {
 						if (!isLastEndpoint && !started) {
 							continue;
 						}
@@ -1007,23 +1017,27 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 			}
 
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new AIError.ProviderResponseError(output.errorMessage ?? "An unknown error occurred", {
-					provider: model.provider,
-					kind: "output",
-				});
+				throw new Error(output.errorMessage ?? "An unknown error occurred");
 			}
 
-			output.duration = performance.now() - startTime;
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			const result = await AIError.finalize(error, { api: model.api, signal: options?.signal, rawRequestDump });
-			output.stopReason = result.stopReason;
-			output.errorStatus = result.status;
-			output.errorId = result.id;
-			output.errorMessage = result.message;
-			output.duration = performance.now() - startTime;
+			for (const block of output.content) {
+				if ("index" in block) {
+					delete (block as { index?: number }).index;
+				}
+			}
+			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			output.errorStatus = extractHttpStatusFromError(error);
+			output.errorMessage = await appendRawHttpRequestDumpFor400(
+				error instanceof Error ? error.message : JSON.stringify(error),
+				error,
+				rawRequestDump,
+			);
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();

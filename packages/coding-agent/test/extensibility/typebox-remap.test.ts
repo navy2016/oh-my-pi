@@ -7,7 +7,6 @@ import {
 	loadLegacyPiModule,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/legacy-pi-compat";
 import { Type as TypeBoxShimType } from "@oh-my-pi/pi-coding-agent/extensibility/typebox";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 // The remap installs a Bun.plugin onResolve hook plus an explicit
 // rewrite branch inside `rewriteBareImportsForLegacyExtension` that
@@ -20,7 +19,7 @@ const tempRoots: string[] = [];
 
 afterAll(async () => {
 	for (const dir of tempRoots) {
-		await removeWithRetries(dir);
+		await fs.rm(dir, { recursive: true, force: true });
 	}
 });
 

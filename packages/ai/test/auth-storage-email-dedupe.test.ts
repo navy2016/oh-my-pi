@@ -4,7 +4,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AuthStorage, type FetchImpl, type OAuthCredential, SqliteAuthCredentialStore } from "@oh-my-pi/pi-ai";
-import { removeWithRetries } from "../../utils/src/temp";
 import { registerOAuthProvider, unregisterOAuthProviders } from "../src/registry/oauth";
 
 const LEGACY_TIMESTAMP = 1_700_000_000;
@@ -123,7 +122,7 @@ describe("AuthStorage openai-codex email dedupe", () => {
 		authStorage = null;
 		dbPath = "";
 		if (tempDir) {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 			tempDir = "";
 		}
 	});
@@ -663,7 +662,7 @@ describe("AuthStorage OAuth login upgrade and multi-account coexistence", () => 
 	afterEach(async () => {
 		unregisterOAuthProviders("auth-storage-login-upgrade-test");
 		if (tempDir) {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 		}
 	});
 
@@ -791,7 +790,7 @@ describe("AuthStorage persistent session stickiness", () => {
 	});
 
 	afterEach(async () => {
-		await removeWithRetries(tempDir);
+		await fs.rm(tempDir, { recursive: true, force: true });
 	});
 
 	it("persists session-sticky credentials across AuthStorage restarts", async () => {

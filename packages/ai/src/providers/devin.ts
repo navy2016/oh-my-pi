@@ -28,8 +28,7 @@ import {
 	StopReason,
 } from "@oh-my-pi/pi-catalog/discovery/devin-gen/exa/codeium_common_pb/codeium_common_pb";
 import { calculateCost } from "@oh-my-pi/pi-catalog/models";
-import { logger, parseStreamingJson } from "@oh-my-pi/pi-utils";
-import * as AIError from "../error";
+import { extractHttpStatusFromError, logger } from "@oh-my-pi/pi-utils";
 import type {
 	Api,
 	AssistantMessage,
@@ -45,6 +44,8 @@ import type {
 } from "../types";
 import { deterministicUuid } from "../utils/deterministic-id";
 import { AssistantMessageEventStream } from "../utils/event-stream";
+import { parseStreamingJson } from "../utils/json-parse";
+import { formatErrorMessageWithRetryAfter } from "../utils/retry-after";
 import { toolWireSchema } from "../utils/schema/wire";
 
 /** Base host for Codeium/Windsurf's Cascade chat API (Connect protocol over HTTP/1.1). */
@@ -78,7 +79,7 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
-		const startTime = performance.now();
+		const startTime = Date.now();
 		let firstTokenTime: number | undefined;
 
 		const output: AssistantMessage = {
@@ -109,7 +110,7 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 		let latestStopReason = StopReason.UNSPECIFIED;
 
 		const markFirstToken = () => {
-			if (firstTokenTime === undefined) firstTokenTime = performance.now();
+			if (firstTokenTime === undefined) firstTokenTime = Date.now();
 		};
 
 		const endTextBlock = () => {
@@ -169,16 +170,12 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 
 			if (!response.ok) {
 				const text = await response.text();
-				throw new AIError.DevinApiError(
-					`Devin API error ${response.status} ${response.statusText}: ${text}`,
-					response.status,
-				);
+				throw Object.assign(new Error(`Devin API error ${response.status} ${response.statusText}: ${text}`), {
+					status: response.status,
+				});
 			}
 			if (!response.body) {
-				throw new AIError.ProviderResponseError("Devin API error: response body is empty", {
-					provider: model.provider,
-					kind: "empty-body",
-				});
+				throw new Error("Devin API error: response body is empty");
 			}
 			const body = response.body;
 
@@ -203,7 +200,7 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 					if (flag & CONNECT_END_STREAM_FLAG) {
 						const trailerBytes = flag & CONNECT_COMPRESSED_FLAG ? gunzipSync(payload) : payload;
 						const trailerError = readConnectTrailerError(trailerBytes.toString("utf8").trim());
-						if (trailerError) throw new AIError.ValidationError(trailerError);
+						if (trailerError) throw new Error(trailerError);
 						continue;
 					}
 
@@ -322,21 +319,20 @@ export const streamDevin: StreamFunction<"devin-agent"> = (
 			output.stopReason = doneReason;
 
 			calculateCost(model, output.usage);
-			output.duration = performance.now() - startTime;
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
 
 			stream.push({ type: "done", reason: doneReason, message: output });
 			stream.end();
 		} catch (error) {
 			logger.error("devin: stream failed", { error: String(error) });
-			const result = await AIError.finalize(error, { api: model.api, signal: options?.signal });
-			output.stopReason = result.stopReason;
-			output.errorStatus = result.status;
-			output.errorId = result.id;
-			output.errorMessage = result.message;
-			output.duration = performance.now() - startTime;
+			const errorReason: "aborted" | "error" = options?.signal?.aborted ? "aborted" : "error";
+			output.stopReason = errorReason;
+			output.errorStatus = extractHttpStatusFromError(error);
+			output.errorMessage = formatErrorMessageWithRetryAfter(error);
+			output.duration = Date.now() - startTime;
 			if (firstTokenTime) output.ttft = firstTokenTime - startTime;
-			stream.push({ type: "error", reason: result.stopReason, error: output });
+			stream.push({ type: "error", reason: errorReason, error: output });
 			stream.end();
 		}
 	})();
@@ -377,17 +373,14 @@ async function fetchDevinAuthMetadata(
 	});
 	const payload = new Uint8Array(await response.arrayBuffer());
 	if (!response.ok) {
-		throw new AIError.DevinApiError(
-			`Devin auth error ${response.status} ${response.statusText}: ${new TextDecoder().decode(payload)}`,
-			response.status,
+		throw Object.assign(
+			new Error(`Devin auth error ${response.status} ${response.statusText}: ${new TextDecoder().decode(payload)}`),
+			{ status: response.status },
 		);
 	}
 	const decoded = decodeDevinUserJwtResponse(payload);
 	if (!decoded.userJwt) {
-		throw new AIError.ProviderResponseError("Devin auth error: GetUserJwt returned an empty user JWT", {
-			provider: "devin",
-			kind: "runtime",
-		});
+		throw new Error("Devin auth error: GetUserJwt returned an empty user JWT");
 	}
 	const customBaseUrl = decoded.customApiServerUrl.trim();
 	return { userJwt: decoded.userJwt, ...(customBaseUrl ? { baseUrl: customBaseUrl.replace(/\/+$/, "") } : undefined) };

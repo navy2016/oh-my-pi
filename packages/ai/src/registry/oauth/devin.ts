@@ -1,4 +1,3 @@
-import * as AIError from "../../error";
 import { OAuthCallbackFlow } from "./callback-server";
 import { generatePKCE } from "./pkce";
 import type { OAuthController, OAuthCredentials } from "./types";
@@ -55,10 +54,7 @@ class DevinOAuthFlow extends OAuthCallbackFlow {
 
 	async exchangeToken(code: string): Promise<OAuthCredentials> {
 		if (!this.#pkce) {
-			throw new AIError.OAuthError("Devin PKCE verifier was not initialized", {
-				kind: "configuration",
-				provider: "devin",
-			});
+			throw new Error("Devin PKCE verifier was not initialized");
 		}
 		const token = await exchangeDevinCliToken(code, this.#pkce.verifier, this.ctrl.fetch);
 
@@ -91,19 +87,12 @@ export async function exchangeDevinCliToken(
 
 	if (!response.ok) {
 		const error = await response.text();
-		throw new AIError.OAuthError(`Devin CLI token exchange failed: ${response.status} ${error}`.trim(), {
-			kind: "token-exchange",
-			provider: "devin",
-			status: response.status,
-		});
+		throw new Error(`Devin CLI token exchange failed: ${response.status} ${error}`.trim());
 	}
 
 	const data = (await response.json()) as { token?: unknown };
 	if (typeof data.token !== "string" || data.token.length === 0) {
-		throw new AIError.OAuthError("Devin CLI token exchange returned an empty token", {
-			kind: "validation",
-			provider: "devin",
-		});
+		throw new Error("Devin CLI token exchange returned an empty token");
 	}
 	return data.token;
 }

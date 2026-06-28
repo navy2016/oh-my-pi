@@ -12,7 +12,6 @@ import {
 	normalizeGitHubCopilotEnterpriseDomain,
 	OPENCODE_HEADERS,
 } from "@oh-my-pi/pi-catalog/wire/github-copilot";
-import * as AIError from "../../error";
 import type { FetchImpl } from "../../types";
 import type { OAuthCredentials } from "./types";
 
@@ -64,7 +63,7 @@ async function fetchJson(url: string, init: RequestInit, fetchImpl: FetchImpl): 
 	const response = await fetchImpl(url, init);
 	if (!response.ok) {
 		const text = await response.text();
-		throw new AIError.ProviderHttpError(`${response.status} ${response.statusText}: ${text}`, response.status);
+		throw new Error(`${response.status} ${response.statusText}: ${text}`);
 	}
 	return response.json();
 }
@@ -89,7 +88,7 @@ async function startDeviceFlow(domain: string, fetchImpl: FetchImpl): Promise<De
 	);
 
 	if (!data || typeof data !== "object") {
-		throw new AIError.OAuthError("Invalid device code response", { kind: "validation", provider: "github-copilot" });
+		throw new Error("Invalid device code response");
 	}
 
 	const deviceCode = (data as Record<string, unknown>).device_code;
@@ -105,10 +104,7 @@ async function startDeviceFlow(domain: string, fetchImpl: FetchImpl): Promise<De
 		typeof interval !== "number" ||
 		typeof expiresIn !== "number"
 	) {
-		throw new AIError.OAuthError("Invalid device code response fields", {
-			kind: "validation",
-			provider: "github-copilot",
-		});
+		throw new Error("Invalid device code response fields");
 	}
 
 	return {
@@ -138,7 +134,7 @@ async function pollForGitHubAccessToken(
 
 	while (Date.now() < deadline) {
 		if (signal?.aborted) {
-			throw new AIError.LoginCancelledError();
+			throw new Error("Login cancelled");
 		}
 
 		const remainingMs = deadline - Date.now();
@@ -146,7 +142,7 @@ async function pollForGitHubAccessToken(
 		try {
 			await scheduler.wait(waitMs, { signal });
 		} catch {
-			throw new AIError.LoginCancelledError();
+			throw new Error("Login cancelled");
 		}
 
 		const raw = await fetchJson(
@@ -188,21 +184,17 @@ async function pollForGitHubAccessToken(
 			}
 
 			const descriptionSuffix = description ? `: ${description}` : "";
-			throw new AIError.OAuthError(`Device flow failed: ${error}${descriptionSuffix}`, {
-				kind: "polling",
-				provider: "github-copilot",
-			});
+			throw new Error(`Device flow failed: ${error}${descriptionSuffix}`);
 		}
 	}
 
 	if (slowDownResponses > 0) {
-		throw new AIError.OAuthError(
+		throw new Error(
 			"Device flow timed out after one or more slow_down responses. This is often caused by clock drift in WSL or VM environments. Please sync or restart the VM clock and try again.",
-			{ kind: "timeout", provider: "github-copilot" },
 		);
 	}
 
-	throw new AIError.OAuthError("Device flow timed out", { kind: "timeout", provider: "github-copilot" });
+	throw new Error("Device flow timed out");
 }
 
 /** Far-future expiry (10 years). GitHub OAuth tokens are long-lived; no JWT exchange needed. */
@@ -322,16 +314,13 @@ export async function loginGitHubCopilot(options: GitHubCopilotLoginOptions): Pr
 	});
 
 	if (options.signal?.aborted) {
-		throw new AIError.LoginCancelledError();
+		throw new Error("Login cancelled");
 	}
 
 	const trimmed = input.trim();
 	const normalizedDomain = normalizeDomain(input);
 	if (trimmed && !normalizedDomain) {
-		throw new AIError.OAuthError("Invalid GitHub Enterprise URL/domain", {
-			kind: "validation",
-			provider: "github-copilot",
-		});
+		throw new Error("Invalid GitHub Enterprise URL/domain");
 	}
 	const enterpriseDomain = normalizeGitHubCopilotEnterpriseDomain(normalizedDomain ?? undefined);
 	const domain =

@@ -13,7 +13,6 @@ import { logger } from "@oh-my-pi/pi-utils";
 import { type } from "arktype";
 import { resolvePromptCacheKey } from "../auth-gateway/http";
 import type { AuthGatewayStreamControl, AuthGatewayParsedRequest as ParsedRequest } from "../auth-gateway/types";
-import * as AIError from "../error";
 import type {
 	AssistantMessage,
 	AssistantMessageEventStream,
@@ -33,7 +32,6 @@ import {
 	type OpenAIResponsesTool,
 	openaiResponsesRequestSchema,
 } from "./openai-responses-server-schema";
-import { encodeTextSignatureV1, parseTextSignature } from "./openai-shared";
 
 export type { ParsedRequest };
 
@@ -53,20 +51,6 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 function asString(v: unknown): string | undefined {
 	return typeof v === "string" ? v : undefined;
-}
-
-type AssistantItemPhase = "commentary" | "final_answer";
-type MessageSignature = { id: string; phase?: AssistantItemPhase };
-
-function parseAssistantItemPhase(value: unknown): AssistantItemPhase | undefined {
-	return value === "commentary" || value === "final_answer" ? value : undefined;
-}
-
-function messageTextSignature(id: unknown, phase: unknown): string | undefined {
-	const parsedPhase = parseAssistantItemPhase(phase);
-	if (typeof id === "string" && id.length > 0) return encodeTextSignatureV1(id, parsedPhase);
-	if (!parsedPhase) return undefined;
-	return encodeTextSignatureV1(makeMsgId(), parsedPhase);
 }
 
 // ─── id helpers ─────────────────────────────────────────────────────────────
@@ -162,27 +146,20 @@ type OutputBlockUnion =
 	| { type: "text"; text: string }
 	| { type: "refusal"; refusal: string };
 
-function outputTextOf(
-	blocks: OpenAIResponsesOutputContent[] | string | undefined,
-	message?: { id?: unknown; phase?: unknown },
-): TextContent[] {
-	const textSignature = messageTextSignature(message?.id, message?.phase);
-	const textContent = (text: string): TextContent =>
-		textSignature ? { type: "text", text, textSignature } : { type: "text", text };
-	if (typeof blocks === "string") return blocks.length > 0 ? [textContent(blocks)] : [];
+function outputTextOf(blocks: OpenAIResponsesOutputContent[] | string | undefined): TextContent[] {
+	if (typeof blocks === "string") return blocks.length > 0 ? [{ type: "text", text: blocks }] : [];
 	if (!blocks) return [];
-	const parts: string[] = [];
+	const out: TextContent[] = [];
 	for (const raw of blocks) {
 		const block = raw as OutputBlockUnion;
 		if (block.type === "output_text" || block.type === "text") {
-			parts.push(block.text);
+			out.push({ type: "text", text: block.text });
 		} else if (block.type === "refusal") {
 			// Preserve the refusal reason so history replay still carries it.
-			parts.push(`[refusal: ${block.refusal}]`);
+			out.push({ type: "text", text: `[refusal: ${block.refusal}]` });
 		}
 	}
-	const text = parts.join("");
-	return text.length > 0 ? [textContent(text)] : [];
+	return out;
 }
 
 // The schema accepts a much wider tool_choice union than the SDK type so the
@@ -289,7 +266,7 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 
 	const data = openaiResponsesRequestSchema(body);
 	if (data instanceof type.errors) {
-		throw new AIError.ValidationError(`openai-responses: ${data.summary}`);
+		throw new Error(`openai-responses: ${data.summary}`);
 	}
 
 	const now = Date.now();
@@ -310,8 +287,6 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 				const msg = item as {
 					role?: string;
 					content?: OpenAIResponsesInputContent[] | OpenAIResponsesOutputContent[] | string;
-					id?: unknown;
-					phase?: unknown;
 				};
 				switch (msg.role) {
 					case "system": {
@@ -327,10 +302,7 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 						break;
 					}
 					case "assistant": {
-						const parts = outputTextOf(msg.content as OpenAIResponsesOutputContent[] | string | undefined, {
-							id: msg.id,
-							phase: msg.phase,
-						});
+						const parts = outputTextOf(msg.content as OpenAIResponsesOutputContent[] | string | undefined);
 						messages.push({
 							role: "assistant",
 							content: parts,
@@ -373,9 +345,7 @@ export function parseRequest(body: unknown, headers?: Headers): ParsedRequest {
 					const parsedArgs: unknown = JSON.parse(argsRaw);
 					args = isObj(parsedArgs) ? parsedArgs : {};
 				} catch {
-					throw new AIError.ValidationError(
-						`openai-responses: function_call ${call.call_id} has invalid JSON arguments`,
-					);
+					throw new Error(`openai-responses: function_call ${call.call_id} has invalid JSON arguments`);
 				}
 				const toolCall: ToolCall = {
 					type: "toolCall",
@@ -530,7 +500,6 @@ type MessageOutputItem = {
 	role: "assistant";
 	status: "completed";
 	content: Array<{ type: "output_text"; text: string; annotations: never[] }>;
-	phase?: AssistantItemPhase;
 };
 
 type FunctionCallOutputItem = {
@@ -622,32 +591,23 @@ function wireCallId(id: string): string {
 function buildOutputItems(message: AssistantMessage): OutputItem[] {
 	const out: OutputItem[] = [];
 	let pendingMessage: MessageOutputItem | null = null;
-	let pendingMessageSignature: { id: string; phase?: AssistantItemPhase } | undefined;
 	const flushMessage = () => {
 		if (pendingMessage) {
 			out.push(pendingMessage);
 			pendingMessage = null;
-			pendingMessageSignature = undefined;
 		}
 	};
 
 	for (const part of message.content) {
 		if (part.type === "text") {
-			const signature = parseTextSignature(part.textSignature);
-			const sameSignature =
-				!pendingMessage ||
-				(pendingMessageSignature?.id === signature?.id && pendingMessageSignature?.phase === signature?.phase);
-			if (!sameSignature) flushMessage();
 			if (!pendingMessage) {
 				pendingMessage = {
 					type: "message",
-					id: signature?.id ?? makeMsgId(),
+					id: makeMsgId(),
 					role: "assistant",
 					status: "completed",
 					content: [],
-					...(signature?.phase ? { phase: signature.phase } : {}),
 				};
-				pendingMessageSignature = signature;
 			}
 			pendingMessage.content.push({ type: "output_text", text: part.text, annotations: [] });
 		} else if (part.type === "thinking") {
@@ -656,8 +616,7 @@ function buildOutputItems(message: AssistantMessage): OutputItem[] {
 		} else if (part.type === "toolCall") {
 			flushMessage();
 			if (part.customWireName) {
-				const input = part.arguments?.input;
-				const rawInput = typeof input === "string" ? input : "";
+				const rawInput = typeof part.arguments?.input === "string" ? (part.arguments.input as string) : "";
 				out.push({
 					type: "custom_tool_call",
 					id: part.thoughtSignature ?? makeCustomCallId(),
@@ -739,7 +698,6 @@ interface OpenMessage {
 	contentIndex: number;
 	currentPartText: string;
 	content: Array<{ type: "output_text"; text: string; annotations: never[] }>;
-	signature?: MessageSignature;
 }
 interface OpenReasoning {
 	kind: "reasoning";
@@ -807,16 +765,15 @@ export function encodeStream(
 				usage: null,
 			});
 
-			const openMessage = (signature?: MessageSignature): OpenMessage => {
+			const openMessage = (): OpenMessage => {
 				const itemOutputIndex = allocateOutputIndex();
-				const itemId = signature?.id ?? makeMsgId();
+				const itemId = makeMsgId();
 				const item = {
 					type: "message" as const,
 					id: itemId,
-					status: "in_progress" as const,
+					status: "in_progress",
 					role: "assistant" as const,
 					content: [] as Array<{ type: "output_text"; text: string; annotations: never[] }>,
-					...(signature?.phase ? { phase: signature.phase } : {}),
 				};
 				emit("response.output_item.added", { output_index: itemOutputIndex, item });
 				const next: OpenMessage = {
@@ -826,7 +783,6 @@ export function encodeStream(
 					contentIndex: 0,
 					currentPartText: "",
 					content: [],
-					...(signature ? { signature } : {}),
 				};
 				state.open = next;
 				return next;
@@ -948,15 +904,20 @@ export function encodeStream(
 				if (!state.open) return;
 				if (state.open.kind === "message") {
 					const item = {
-						type: "message" as const,
+						type: "message",
 						id: state.open.itemId,
-						status: "completed" as const,
-						role: "assistant" as const,
+						status: "completed",
+						role: "assistant",
 						content: state.open.content,
-						...(state.open.signature?.phase ? { phase: state.open.signature.phase } : {}),
 					};
 					emit("response.output_item.done", { output_index: state.open.outputIndex, item });
-					finishedItems.push(item);
+					finishedItems.push({
+						type: "message",
+						id: state.open.itemId,
+						role: "assistant",
+						status: "completed",
+						content: state.open.content,
+					});
 					state.open = null;
 				} else if (state.open.kind === "reasoning") {
 					const summary = [{ type: "summary_text" as const, text: state.open.reasoningText ?? "" }];
@@ -1009,33 +970,20 @@ export function encodeStream(
 						}
 						case "text_start": {
 							let cur: OpenMessage;
-							const textBlock = ev.partial.content[ev.contentIndex];
-							const signature =
-								textBlock?.type === "text" ? parseTextSignature(textBlock.textSignature) : undefined;
 							if (state.open && state.open.kind === "message") {
-								const sameSignature =
-									(!signature && !state.open.signature) ||
-									(signature !== undefined &&
-										state.open.signature?.id === signature.id &&
-										state.open.signature.phase === signature.phase);
-								if (sameSignature) {
-									// Continue same message item, new content part.
-									cur = state.open;
-									cur.currentPartText = "";
-								} else {
-									closeOpen();
-									cur = openMessage(signature);
-								}
+								// continue same message item, new content part
+								cur = state.open;
+								cur.currentPartText = "";
 							} else {
 								if (state.open && state.open.kind !== "function_call") closeOpen();
-								cur = openMessage(signature);
+								cur = openMessage();
 							}
-							const contentPart = { type: "output_text", text: "", annotations: [] as never[] };
+							const part = { type: "output_text", text: "", annotations: [] as never[] };
 							emit("response.content_part.added", {
 								item_id: cur.itemId,
 								output_index: cur.outputIndex,
 								content_index: cur.contentIndex,
-								part: contentPart,
+								part,
 							});
 							break;
 						}

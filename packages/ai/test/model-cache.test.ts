@@ -6,7 +6,6 @@ import * as path from "node:path";
 import type { Model } from "@oh-my-pi/pi-ai/types";
 import { buildModel } from "@oh-my-pi/pi-catalog/build";
 import { readModelCache, writeModelCache } from "@oh-my-pi/pi-catalog/model-cache";
-import { removeWithRetries } from "../../utils/src/temp";
 
 const TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -41,7 +40,7 @@ describe("model cache migrations", () => {
 
 	afterEach(async () => {
 		if (tempDir) {
-			await removeWithRetries(tempDir);
+			await fs.rm(tempDir, { recursive: true, force: true });
 			tempDir = "";
 			dbPath = "";
 		}

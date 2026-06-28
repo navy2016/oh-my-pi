@@ -4,8 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { CursorExecHandlers } from "@oh-my-pi/pi-coding-agent/cursor";
-import { GrepTool, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
+import { SearchTool, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 
 function createTestSession(cwd: string, overrides: Partial<ToolSession> = {}): ToolSession {
 	return {
@@ -20,21 +19,21 @@ function createTestSession(cwd: string, overrides: Partial<ToolSession> = {}): T
 
 describe("CursorExecHandlers.grep bridge", () => {
 	let cwd: string;
-	let searchTool: GrepTool;
+	let searchTool: SearchTool;
 	let handlers: CursorExecHandlers;
 
 	beforeEach(async () => {
 		cwd = await fs.mkdtemp(path.join(os.tmpdir(), "cursor-exec-test-"));
 		await Bun.write(path.join(cwd, "sample.txt"), "Hello World\nhello world\n");
-		searchTool = new GrepTool(createTestSession(cwd));
+		searchTool = new SearchTool(createTestSession(cwd));
 		handlers = new CursorExecHandlers({
 			cwd,
-			tools: new Map([["grep", searchTool as any]]),
+			tools: new Map([["search", searchTool as any]]),
 		});
 	});
 
 	afterEach(async () => {
-		await removeWithRetries(cwd);
+		await fs.rm(cwd, { recursive: true, force: true });
 	});
 
 	it("maps caseInsensitive parameter correctly through the grep bridge", async () => {

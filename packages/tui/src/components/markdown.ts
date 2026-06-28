@@ -86,11 +86,7 @@ function createHtmlNormalizationState(): HtmlNormalizationState {
 	return { lists: [], openItems: [], itemHasContent: [] };
 }
 
-const HTML_TAG_REGEX = /<\/?(?:br|p|ol|ul|li|span|text|code|hr|blockquote)\b(?:\s[^>]*)?\s*\/?>/gi;
-// Block-level HTML that needs structural (not just textual) rendering: standalone
-// `<hr>` becomes a rule and balanced `<blockquote>…</blockquote>` renders with
-// quote styling. Group 1 captures blockquote inner content; it is undefined for hr.
-const BLOCK_HTML_REGEX = /<hr\b[^>]*\/?>|<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi;
+const HTML_TAG_REGEX = /<\/?(?:br|p|ol|ul|li|span|text)\b(?:\s[^>]*)?\s*\/?>/gi;
 
 function htmlTagName(tag: string): string {
 	const match = /^<\/?\s*([A-Za-z][A-Za-z0-9:-]*)/.exec(tag);
@@ -128,32 +124,25 @@ function isAtEmptyHtmlListItem(state: HtmlNormalizationState): boolean {
 	return state.openItems[itemIndex] === true && state.itemHasContent[itemIndex] !== true;
 }
 
-function normalizeHtmlForTerminal(
-	raw: string,
-	state: HtmlNormalizationState = createHtmlNormalizationState(),
-	codeHook?: (text: string) => string,
-): string {
+function normalizeHtmlForTerminal(raw: string, state: HtmlNormalizationState = createHtmlNormalizationState()): string {
 	let output = "";
 	let lastIndex = 0;
-	let inCode = false;
 
 	for (const match of raw.matchAll(HTML_TAG_REGEX)) {
 		const tag = match[0];
 		const index = match.index ?? 0;
 		const textBeforeTag = normalizeHtmlEntitiesForTerminal(raw.slice(lastIndex, index));
 		const name = htmlTagName(tag);
-		// Most tags handled here are block-level. Inline contexts — span, text, and
-		// the content inside a `<code>` run — keep their surrounding whitespace
-		// verbatim because it is significant. For block-level tags, HTML formatting
-		// whitespace between tags (e.g. the newlines and indentation in
-		// pretty-printed `<ul>\n  <li>…`) is not rendered content; appending it
-		// literally would leak source indentation before bullets and blank rows
-		// between items, so a whitespace-only slice is dropped. Text inside a
-		// `<code>` run is routed through `codeHook` so the inline-code theme is
-		// applied without leaking the raw `<code>`/`</code>` tags.
+		// Every tag handled here is block-level EXCEPT span and text. For block-level tags,
+		// HTML formatting whitespace between block/list tags (e.g. the newlines and
+		// indentation in pretty-printed `<ul>\n  <li>…`) is not rendered content;
+		// appending it literally would leak source indentation before bullets and
+		// blank rows between items. A whitespace-only slice is always insignificant formatting
+		// and is dropped. But for inline tags like span and text, surrounding whitespace
+		// is significant and must NOT be dropped.
 		const isInlineTag = name === "span" || name === "text";
-		if (isInlineTag || inCode || textBeforeTag.trim() !== "") {
-			output += inCode && codeHook ? codeHook(textBeforeTag) : textBeforeTag;
+		if (isInlineTag || textBeforeTag.trim() !== "") {
+			output += textBeforeTag;
 			markCurrentHtmlItemContent(state, textBeforeTag);
 		}
 		lastIndex = index + tag.length;
@@ -165,16 +154,10 @@ function normalizeHtmlForTerminal(
 			case "span":
 			case "text":
 				break;
-			case "code":
-				if (isClosing) inCode = false;
-				else if (!isSelfClosing) inCode = true;
-				break;
 			case "br":
-			case "hr":
 				output = appendHtmlLineBreak(output, true);
 				break;
 			case "p":
-			case "blockquote":
 				if (isClosing) {
 					output = appendHtmlLineBreak(output);
 				} else if (output.trim() !== "" && !output.endsWith("\n") && !isAtEmptyHtmlListItem(state)) {
@@ -240,7 +223,7 @@ function normalizeHtmlForTerminal(
 
 	const remainingText = normalizeHtmlEntitiesForTerminal(raw.slice(lastIndex));
 	markCurrentHtmlItemContent(state, remainingText);
-	return output + (inCode && codeHook ? codeHook(remainingText) : remainingText);
+	return output + remainingText;
 }
 
 function splitTerminalLines(text: string): string[] {
@@ -638,59 +621,6 @@ function plainInlineTokens(tokens: Token[]): string {
 		}
 	}
 	return result;
-}
-
-/**
- * Classify an inline `html` token by tag name and whether it is a closing tag.
- * Returns null for non-html tokens or raw that isn't a recognizable HTML tag.
- */
-function inlineHtmlTag(token: Token): { name: string; closing: boolean } | null {
-	if ((token as { type: string }).type !== "html") return null;
-	const raw = (token as { raw?: unknown }).raw;
-	if (typeof raw !== "string") return null;
-	const name = htmlTagName(raw);
-	if (!name) return null;
-	return { name, closing: /^<\s*\//.test(raw) };
-}
-
-/**
- * Collapse inline `<code>…</code>` runs — which marked emits as separate `html`
- * open/close tokens around the literal content — into a single synthetic
- * `codespan` token, so they render with the theme's inline-code styling instead
- * of leaking the raw tags. HTML entities inside the run are decoded. Stray or
- * unmatched code tags are dropped; other inline html tokens pass through for the
- * `html` render path to normalize. Returns the original array when no `<code>`
- * tag is present (the common case).
- */
-function collapseInlineHtml(tokens: Token[]): Token[] {
-	let hasCode = false;
-	for (const token of tokens) {
-		if (inlineHtmlTag(token)?.name === "code") {
-			hasCode = true;
-			break;
-		}
-	}
-	if (!hasCode) return tokens;
-
-	const out: Token[] = [];
-	for (let i = 0; i < tokens.length; i++) {
-		const tag = inlineHtmlTag(tokens[i]);
-		if (tag?.name === "code") {
-			if (tag.closing) continue; // stray `</code>` — drop it
-			let j = i + 1;
-			for (; j < tokens.length; j++) {
-				const close = inlineHtmlTag(tokens[j]);
-				if (close?.name === "code" && close.closing) break;
-			}
-			if (j >= tokens.length) continue; // unmatched `<code>` — drop it, render the rest normally
-			const text = normalizeHtmlEntitiesForTerminal(plainInlineTokens(tokens.slice(i + 1, j)));
-			out.push({ type: "codespan", raw: text, text } as Token);
-			i = j;
-			continue;
-		}
-		out.push(tokens[i]);
-	}
-	return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1194,19 @@ export class Markdown implements Component {
 			}
 
 			case "blockquote": {
+				const quoteStyle = (text: string) => this.#theme.quote(this.#theme.italic(text));
+				const quoteStylePrefix = this.#getStylePrefix(quoteStyle);
+				const applyQuoteStyle = (line: string): string => {
+					if (!quoteStylePrefix) {
+						return quoteStyle(line);
+					}
+
+					const lineWithReappliedStyle = line.replace(/\x1b\[0m/g, `\x1b[0m${quoteStylePrefix}`);
+					return quoteStyle(lineWithReappliedStyle);
+				};
+
+				// Blockquotes contain block-level tokens (paragraph, list, code, etc.), so render
+				// children recursively and keep default message styling out of nested content.
 				const quoteInlineStyleContext: InlineStyleContext = {
 					applyText: (text: string) => text,
 					stylePrefix: "",
@@ -1284,7 +1227,13 @@ export class Markdown implements Component {
 					renderedQuoteLines.pop();
 				}
 
-				lines.push(...this.#applyQuoteBorder(renderedQuoteLines, width));
+				for (const quoteLine of renderedQuoteLines) {
+					const styledLine = applyQuoteStyle(quoteLine);
+					const wrappedLines = wrapTextWithAnsi(styledLine, quoteContentWidth);
+					for (const wrappedLine of wrappedLines) {
+						lines.push(this.#theme.quoteBorder(`${this.#theme.symbols.quoteBorder} `) + wrappedLine);
+					}
+				}
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after blockquotes (unless space token follows)
 				}
@@ -1293,7 +1242,9 @@ export class Markdown implements Component {
 
 			case "hr": {
 				const raw = "raw" in token && typeof token.raw === "string" ? token.raw.trim() : "";
-				lines.push(this.#renderHrLine(width, raw[0] || ""));
+				const char = raw[0] || "";
+				const fillChar = getHrChar(char, this.#theme.symbols.hrChar);
+				lines.push(this.#theme.hr(fillChar.repeat(Math.min(width, 80))));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after horizontal rules (unless space token follows)
 				}
@@ -1302,7 +1253,12 @@ export class Markdown implements Component {
 
 			case "html":
 				if ("raw" in token && typeof token.raw === "string") {
-					lines.push(...this.#renderHtmlBlock(token.raw, width));
+					const cleaned = normalizeHtmlForTerminal(token.raw);
+					const blockLines = splitTerminalLines(cleaned);
+					for (const line of blockLines) {
+						const trimmed = line.trimEnd();
+						lines.push(trimmed.trim() === "" ? "" : this.#applyDefaultStyle(trimmed));
+					}
 				}
 				break;
 
@@ -1321,78 +1277,6 @@ export class Markdown implements Component {
 		return lines;
 	}
 
-	/** Render a horizontal rule line themed to `width`, matching `sourceChar` when given. */
-	#renderHrLine(width: number, sourceChar = ""): string {
-		const fillChar = getHrChar(sourceChar, this.#theme.symbols.hrChar);
-		return this.#theme.hr(fillChar.repeat(Math.min(width, 80)));
-	}
-
-	/**
-	 * Wrap already-rendered lines in the blockquote border and quote styling.
-	 * `width` is the full content width; the border reserves two cells.
-	 */
-	#applyQuoteBorder(renderedLines: string[], width: number): string[] {
-		const quoteStyle = (text: string) => this.#theme.quote(this.#theme.italic(text));
-		const quoteStylePrefix = this.#getStylePrefix(quoteStyle);
-		const applyQuoteStyle = (line: string): string => {
-			if (!quoteStylePrefix) {
-				return quoteStyle(line);
-			}
-			const lineWithReappliedStyle = line.replace(/\x1b\[0m/g, `\x1b[0m${quoteStylePrefix}`);
-			return quoteStyle(lineWithReappliedStyle);
-		};
-		const quoteContentWidth = Math.max(1, width - 2);
-		const lines: string[] = [];
-		for (const quoteLine of renderedLines) {
-			const styledLine = applyQuoteStyle(quoteLine);
-			for (const wrappedLine of wrapTextWithAnsi(styledLine, quoteContentWidth)) {
-				lines.push(this.#theme.quoteBorder(`${this.#theme.symbols.quoteBorder} `) + wrappedLine);
-			}
-		}
-		return lines;
-	}
-
-	/**
-	 * Render a block-level `html` token to styled lines. Standalone `<hr>` tags
-	 * become rules and balanced `<blockquote>…</blockquote>` regions render with
-	 * quote styling; the remaining markup is normalized to terminal text (entities
-	 * decoded, `<code>` themed, lists/`<br>`/`<p>` laid out).
-	 */
-	#renderHtmlBlock(raw: string, width: number): string[] {
-		const lines: string[] = [];
-		const state = createHtmlNormalizationState();
-		const codeHook = (text: string): string => this.#theme.code(text) + this.#getDefaultStylePrefix();
-		const flushText = (chunk: string): void => {
-			const cleaned = normalizeHtmlForTerminal(chunk, state, codeHook);
-			if (cleaned.trim() === "") return;
-			for (const line of splitTerminalLines(cleaned)) {
-				const trimmed = line.trimEnd();
-				lines.push(trimmed.trim() === "" ? "" : this.#applyDefaultStyle(trimmed));
-			}
-		};
-		let lastIndex = 0;
-		BLOCK_HTML_REGEX.lastIndex = 0;
-		for (let match = BLOCK_HTML_REGEX.exec(raw); match !== null; match = BLOCK_HTML_REGEX.exec(raw)) {
-			flushText(raw.slice(lastIndex, match.index));
-			lastIndex = match.index + match[0].length;
-			if (match[1] !== undefined) {
-				lines.push(...this.#renderHtmlBlockquote(match[1], width));
-			} else {
-				lines.push(this.#renderHrLine(width));
-			}
-		}
-		flushText(raw.slice(lastIndex));
-		return lines;
-	}
-
-	/** Render the inner content of an HTML `<blockquote>` with quote styling. */
-	#renderHtmlBlockquote(inner: string, width: number): string[] {
-		const cleaned = normalizeHtmlForTerminal(inner, createHtmlNormalizationState(), text => this.#theme.code(text));
-		const innerLines = splitTerminalLines(cleaned).map(line => line.trimEnd());
-		while (innerLines.length > 0 && innerLines[innerLines.length - 1] === "") innerLines.pop();
-		return this.#applyQuoteBorder(innerLines, width);
-	}
-
 	#renderInlineTokens(tokens: Token[], styleContext?: InlineStyleContext): string {
 		let result = "";
 		const resolvedStyleContext = styleContext ?? this.#getDefaultInlineStyleContext();
@@ -1408,7 +1292,7 @@ export class Markdown implements Component {
 			markCurrentHtmlItemContent(htmlState, text);
 		};
 
-		for (const token of collapseInlineHtml(tokens)) {
+		for (const token of tokens) {
 			if (isMathToken(token)) {
 				markHtmlItemWhenContent(token.text);
 				result += applyTextWithNewlines(renderMathToken(token.text));
@@ -1889,7 +1773,7 @@ export function renderInlineMarkdown(text: string, mdTheme: MarkdownTheme, baseC
 				})
 				.join(applyText(" "));
 		} else if ("text" in token && typeof token.text === "string") {
-			result += applyText(normalizeHtmlEntitiesForTerminal(token.text));
+			result += applyText(token.text);
 		}
 	}
 	return result;
@@ -1898,7 +1782,7 @@ export function renderInlineMarkdown(text: string, mdTheme: MarkdownTheme, baseC
 function renderInlineTokens(tokens: Token[], mdTheme: MarkdownTheme, applyText: (t: string) => string): string {
 	let result = "";
 	const styleReset = applyText("");
-	for (const token of collapseInlineHtml(tokens)) {
+	for (const token of tokens) {
 		if (isMathToken(token)) {
 			result += applyText(renderMathToken(token.text));
 			continue;
@@ -1908,7 +1792,7 @@ function renderInlineTokens(tokens: Token[], mdTheme: MarkdownTheme, applyText: 
 				if (token.tokens && token.tokens.length > 0) {
 					result += renderInlineTokens(token.tokens, mdTheme, applyText);
 				} else {
-					result += applyText(normalizeHtmlEntitiesForTerminal(token.text));
+					result += applyText(token.text);
 				}
 				break;
 			case "strong":
@@ -1928,14 +1812,9 @@ function renderInlineTokens(tokens: Token[], mdTheme: MarkdownTheme, applyText: 
 				result += mdTheme.link(mdTheme.underline(linkText)) + styleReset;
 				break;
 			}
-			case "html":
-				if ("raw" in token && typeof token.raw === "string") {
-					result += applyText(normalizeHtmlForTerminal(token.raw));
-				}
-				break;
 			default:
 				if ("text" in token && typeof token.text === "string") {
-					result += applyText(normalizeHtmlEntitiesForTerminal(token.text));
+					result += applyText(token.text);
 				}
 				break;
 		}

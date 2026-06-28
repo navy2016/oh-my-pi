@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import { ensureAutoresearchBranch } from "../src/autoresearch/git";
 import type { ExtensionAPI } from "../src/extensibility/extensions";
 import * as jj from "../src/utils/jj";
@@ -42,7 +41,7 @@ const stubApi = {} as unknown as ExtensionAPI;
 
 afterEach(async () => {
 	jj.repo.clearRootCache();
-	await Promise.all(tempDirs.splice(0).map(dir => removeWithRetries(dir)));
+	await Promise.all(tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
 });
 
 describe("ensureAutoresearchBranch jj guardrails", () => {

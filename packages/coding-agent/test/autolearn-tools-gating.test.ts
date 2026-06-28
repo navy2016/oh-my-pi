@@ -10,7 +10,6 @@ import type { MnemopiSessionState } from "@oh-my-pi/pi-coding-agent/mnemopi/stat
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { LearnTool } from "@oh-my-pi/pi-coding-agent/tools/learn";
 import { ManageSkillTool } from "@oh-my-pi/pi-coding-agent/tools/manage-skill";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils/dirs";
 import { type } from "arktype";
 
@@ -120,7 +119,7 @@ describe("manage_skill execute", () => {
 		spyOn(os, "homedir").mockRestore();
 		setAgentDir(originalAgentDir);
 		resetActiveSkillsForTests();
-		await removeWithRetries(tempHome);
+		await fs.rm(tempHome, { recursive: true, force: true });
 	});
 
 	const tool = () => ManageSkillTool.createIf(makeSession({ "autolearn.enabled": true }))!;
@@ -213,7 +212,7 @@ describe("learn execute", () => {
 	afterEach(async () => {
 		spyOn(os, "homedir").mockRestore();
 		setAgentDir(originalAgentDir);
-		await removeWithRetries(tempHome);
+		await fs.rm(tempHome, { recursive: true, force: true });
 	});
 
 	it("stores a lesson to memory without writing a skill when no skill payload", async () => {

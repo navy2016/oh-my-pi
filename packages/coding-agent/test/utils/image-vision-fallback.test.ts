@@ -9,7 +9,6 @@ import {
 	type DescribeAttachedImagesDeps,
 	describeAttachedImagesForTextModel,
 } from "@oh-my-pi/pi-coding-agent/utils/image-vision-fallback";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 // 1x1 transparent PNG.
 const TINY_PNG_BASE64 =
@@ -83,7 +82,7 @@ describe("describeAttachedImagesForTextModel", () => {
 	});
 
 	afterEach(async () => {
-		await removeWithRetries(testDir);
+		await fs.rm(testDir, { recursive: true, force: true });
 	});
 
 	it("saves the image under local:// and injects a vision description block", async () => {

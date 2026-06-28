@@ -7,7 +7,6 @@ import {
 	__rewriteLegacyExtensionSourceForTests,
 	loadLegacyPiModule,
 } from "@oh-my-pi/pi-coding-agent/extensibility/plugins/legacy-pi-compat";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 // Issue #1674: legacy Pi extensions load browser-UI assets (HTML/CSS) at module
 // init via `readFileSync(join(__dirname, "ui.html"))`. The compat layer must run
@@ -20,7 +19,7 @@ const tempRoots: string[] = [];
 
 afterAll(async () => {
 	for (const dir of tempRoots) {
-		await removeWithRetries(dir);
+		await fs.rm(dir, { recursive: true, force: true });
 	}
 });
 
@@ -137,16 +136,12 @@ describe("legacy-pi in-place module loading (issue #1674)", () => {
 			importer,
 		);
 
-		const expectedEsmDepUrls = [
-			path.join(dir, "node_modules/esmdep/value.js"),
-			await fs.realpath(path.join(dir, "node_modules/esmdep/value.js")),
-		].map(p => url.pathToFileURL(p).href);
-		const expectedRootDepUrls = [
-			path.join(dir, "node_modules/rootdep/dist/index.js"),
-			await fs.realpath(path.join(dir, "node_modules/rootdep/dist/index.js")),
-		].map(p => url.pathToFileURL(p).href);
-		expect(expectedEsmDepUrls.some(expected => rewritten.includes(expected))).toBe(true);
-		expect(expectedRootDepUrls.some(expected => rewritten.includes(expected))).toBe(true);
+		expect(rewritten).toContain(
+			url.pathToFileURL(await fs.realpath(path.join(dir, "node_modules/esmdep/value.js"))).href,
+		);
+		expect(rewritten).toContain(
+			url.pathToFileURL(await fs.realpath(path.join(dir, "node_modules/rootdep/dist/index.js"))).href,
+		);
 		expect(rewritten).toContain('from "node:path"');
 	});
 

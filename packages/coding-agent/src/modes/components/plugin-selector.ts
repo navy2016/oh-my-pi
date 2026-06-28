@@ -4,10 +4,9 @@
  * Shows available plugins from all configured marketplaces in a SelectList.
  * Selecting a plugin triggers installation. Esc cancels.
  */
-import { Container, type SelectItem, SelectList, type SgrMouseEvent } from "@oh-my-pi/pi-tui";
+import { Container, type SelectItem, SelectList } from "@oh-my-pi/pi-tui";
 import { getSelectListTheme } from "../theme/theme";
 import { DynamicBorder } from "./dynamic-border";
-import { routeSelectListMouseWithTopBorder } from "./select-list-mouse-routing";
 
 export interface PluginSelectorCallbacks {
 	onSelect: (pluginName: string, marketplace: string, scope?: "user" | "project") => void;
@@ -82,10 +81,6 @@ export class PluginSelectorComponent extends Container {
 
 	getSelectList(): SelectList {
 		return this.#selectList;
-	}
-
-	routeMouse(event: SgrMouseEvent, line: number, col: number): void {
-		routeSelectListMouseWithTopBorder(this.#selectList, event, line, col);
 	}
 }
 

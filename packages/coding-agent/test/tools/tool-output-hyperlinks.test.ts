@@ -9,9 +9,8 @@ import { getThemeByName, initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { astGrepToolRenderer } from "@oh-my-pi/pi-coding-agent/tools/ast-grep";
 import { ReadTool, readToolRenderer } from "@oh-my-pi/pi-coding-agent/tools/read";
+import { searchToolRenderer } from "@oh-my-pi/pi-coding-agent/tools/search";
 import { WriteTool, writeToolRenderer } from "@oh-my-pi/pi-coding-agent/tools/write";
-import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
-import { grepToolRenderer } from "../../src/tools/grep";
 
 // 1x1 PNG so the read tool takes its image branch.
 const TINY_PNG_BASE64 =
@@ -82,7 +81,7 @@ describe("tool output OSC 8 file:// hyperlinks", () => {
 			expect(extractLinkUris(textRender)).toContain(url.pathToFileURL(path.resolve(textPath)).href);
 			expect(extractLinkUris(imgRender)).toContain(url.pathToFileURL(path.resolve(imgPath)).href);
 		} finally {
-			removeSyncWithRetries(dir);
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -105,7 +104,7 @@ describe("tool output OSC 8 file:// hyperlinks", () => {
 				.join("\n");
 			expect(extractLinkUris(rendered)).toContain(url.pathToFileURL(path.resolve(filePath)).href);
 		} finally {
-			removeSyncWithRetries(dir);
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 
@@ -129,7 +128,7 @@ describe("tool output OSC 8 file:// hyperlinks", () => {
 				displayContent: ["# src/", "## interactive-mode.ts#abcd", "*12│const needle = true;"].join("\n"),
 			},
 		};
-		const rendered = grepToolRenderer
+		const rendered = searchToolRenderer
 			.renderResult(result as never, { expanded: true, isPartial: false }, theme, { pattern: "needle" })
 			.render(240)
 			.join("\n");

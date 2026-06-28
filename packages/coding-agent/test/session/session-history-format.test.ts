@@ -106,13 +106,13 @@ describe("formatSessionHistoryMarkdown", () => {
 			{
 				role: "toolResult",
 				toolCallId: "tc-orphan",
-				toolName: "grep",
+				toolName: "search",
 				content: [{ type: "text", text: "one match" }],
 				isError: false,
 				timestamp: 1,
 			},
 		]);
-		expect(output).toContain("→ grep() ⇒ ok · 1 line");
+		expect(output).toContain("→ search() ⇒ ok · 1 line");
 	});
 
 	it("renders find paths without falling back to JSON arguments", () => {
@@ -122,8 +122,8 @@ describe("formatSessionHistoryMarkdown", () => {
 				content: [
 					{
 						type: "toolCall",
-						id: "tc-glob",
-						name: "glob",
+						id: "tc-find",
+						name: "find",
 						arguments: { paths: ["packages/coding-agent/src/**/*.ts"] },
 					},
 				],
@@ -131,15 +131,15 @@ describe("formatSessionHistoryMarkdown", () => {
 			},
 			{
 				role: "toolResult",
-				toolCallId: "tc-glob",
-				toolName: "glob",
+				toolCallId: "tc-find",
+				toolName: "find",
 				content: [{ type: "text", text: "session-history-format.ts" }],
 				isError: false,
 				timestamp: 2,
 			},
 		]);
 
-		expect(output).toContain("→ glob(packages/coding-agent/src/**/*.ts) ⇒ ok · 1 line");
+		expect(output).toContain("→ find(packages/coding-agent/src/**/*.ts) ⇒ ok · 1 line");
 		expect(output).not.toContain('{"paths"');
 	});
 
@@ -150,8 +150,8 @@ describe("formatSessionHistoryMarkdown", () => {
 				content: [
 					{
 						type: "toolCall",
-						id: "tc-grep",
-						name: "grep",
+						id: "tc-search",
+						name: "search",
 						arguments: { pattern: "PRIMARY_ARG_KEYS", paths: ["packages/coding-agent/src/session"] },
 					},
 				],
@@ -159,8 +159,8 @@ describe("formatSessionHistoryMarkdown", () => {
 			},
 			{
 				role: "toolResult",
-				toolCallId: "tc-grep",
-				toolName: "grep",
+				toolCallId: "tc-search",
+				toolName: "search",
 				content: [{ type: "text", text: "timed out" }],
 				isError: true,
 				timestamp: 2,
@@ -168,7 +168,7 @@ describe("formatSessionHistoryMarkdown", () => {
 		]);
 
 		expect(output).toContain(
-			"→ grep(PRIMARY_ARG_KEYS @ packages/coding-agent/src/session) ⇒ error · 1 line — timed out",
+			"→ search(PRIMARY_ARG_KEYS @ packages/coding-agent/src/session) ⇒ error · 1 line — timed out",
 		);
 	});
 

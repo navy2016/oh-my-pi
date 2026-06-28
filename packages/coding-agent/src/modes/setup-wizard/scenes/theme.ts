@@ -1,6 +1,5 @@
 import {
 	padding,
-	routeSelectListMouse,
 	type SelectItem,
 	SelectList,
 	type SgrMouseEvent,
@@ -129,11 +128,18 @@ class ThemeSceneController implements SetupSceneController {
 
 	/** Wheel moves the highlight (live preview); hover lights the row under the pointer; click confirms it. */
 	routeMouse(event: SgrMouseEvent, line: number, _col: number): void {
-		// Mirror the pre-helper flow: wheel/motion are always processed, but a
-		// hidden list (#listRowStart < 0, e.g. while loading all themes) must
-		// never hit-test a row — route through a line that resolves to undefined.
-		const listLine = this.#listRowStart >= 0 ? line - this.#listRowStart : Number.NEGATIVE_INFINITY;
-		routeSelectListMouse(this.#selectList, event, listLine);
+		if (event.wheel !== null) {
+			this.#selectList.handleWheel(event.wheel);
+			return;
+		}
+		const index = this.#listRowStart >= 0 ? this.#selectList.hitTest(line - this.#listRowStart) : undefined;
+		if (event.motion) {
+			this.#selectList.setHoverIndex(index ?? null);
+			return;
+		}
+		if (event.leftClick && index !== undefined) {
+			this.#selectList.clickItem(index);
+		}
 	}
 
 	render(width: number): readonly string[] {

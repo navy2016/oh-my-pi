@@ -7,8 +7,6 @@ class MinimalTerminal implements Terminal {
 	rows = 24;
 	kittyProtocolActive = false;
 	kittyEnableSequence: string | null = null;
-	keyboardEnhancementEnterSequence: string | null = null;
-	keyboardEnhancementExitSequence: string | null = null;
 	appearance: TerminalAppearance | undefined;
 	#onInput: ((data: string) => void) | undefined;
 	#onResize: (() => void) | undefined;

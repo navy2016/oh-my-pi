@@ -16,7 +16,6 @@ import { AgentTranscriptViewer } from "@oh-my-pi/pi-coding-agent/modes/component
 import { initTheme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import { AgentRegistry } from "@oh-my-pi/pi-coding-agent/registry/agent-registry";
 import { CURRENT_SESSION_VERSION } from "@oh-my-pi/pi-coding-agent/session/session-entries";
-import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
 
 const TS = new Date().toISOString();
 
@@ -112,7 +111,7 @@ function withViewer(fn: (viewer: AgentTranscriptViewer) => void): void {
 	try {
 		fn(makeViewer(file));
 	} finally {
-		removeSyncWithRetries(dir);
+		fs.rmSync(dir, { recursive: true, force: true });
 	}
 }
 
@@ -181,7 +180,7 @@ describe("AgentTranscriptViewer", () => {
 			viewer.handleInput("g");
 			expect(body()).toContain("PROMPTMARKER");
 
-			removeSyncWithRetries(file);
+			fs.rmSync(file);
 			// Poll until the viewer's own poll timer re-stats and clears (deadline-bounded).
 			const deadline = Date.now() + 5000;
 			while (body().includes("PROMPTMARKER") && Date.now() < deadline) {
@@ -190,7 +189,7 @@ describe("AgentTranscriptViewer", () => {
 			expect(body()).not.toContain("PROMPTMARKER");
 		} finally {
 			viewer.dispose();
-			removeSyncWithRetries(dir);
+			fs.rmSync(dir, { recursive: true, force: true });
 		}
 	});
 

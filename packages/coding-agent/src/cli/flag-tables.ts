@@ -46,7 +46,6 @@ export interface ParseDeps {
 	logger: { warn: (message: string, meta?: Record<string, unknown>) => void };
 	parseThinking: (value: string | null | undefined) => ConfiguredThinkingLevel | undefined;
 	builtinToolNames: readonly string[];
-	normalizeToolNames: (values: Iterable<string>) => string[];
 	thinkingEfforts: readonly string[];
 }
 
@@ -148,12 +147,10 @@ export const STRING_SETTERS: Record<string, StringSetter> = {
 		result.models = value.split(",").map(s => s.trim());
 	},
 	"--tools": (result, value, deps) => {
-		const names = deps.normalizeToolNames(
-			value
-				.split(",")
-				.map(s => s.trim())
-				.filter(Boolean),
-		);
+		const names = value
+			.split(",")
+			.map(s => s.trim().toLowerCase())
+			.filter(Boolean);
 		const valid: string[] = [];
 		for (const name of names) {
 			if (deps.builtinToolNames.includes(name)) {

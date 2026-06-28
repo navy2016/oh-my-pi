@@ -10,7 +10,6 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { buildSystemPrompt } from "@oh-my-pi/pi-coding-agent/system-prompt";
-import { removeSyncWithRetries } from "@oh-my-pi/pi-utils";
 import { cleanupTempHome } from "./helpers/temp-home-cleanup";
 
 const EMPTY_TREE = {
@@ -81,7 +80,7 @@ describe("AgentSession model-change prompt refresh", () => {
 			session = undefined;
 		}
 		authStorage.close();
-		removeSyncWithRetries(tempDir);
+		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
 	function pickTwoModels(): [Model, Model] {

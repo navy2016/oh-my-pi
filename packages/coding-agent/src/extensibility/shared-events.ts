@@ -238,7 +238,6 @@ export interface AutoRetryStartEvent {
 	maxAttempts: number;
 	delayMs: number;
 	errorMessage: string;
-	errorId?: number;
 }
 
 /** Fired when auto-retry ends */

@@ -10,7 +10,6 @@
  * - generateAuthUrl(): Build provider-specific authorization URL
  * - exchangeToken(): Exchange authorization code for tokens
  */
-import * as AIError from "../../error";
 import templateHtml from "./oauth.html" with { type: "text" };
 import type { OAuthController, OAuthCredentials } from "./types";
 
@@ -128,7 +127,7 @@ export abstract class OAuthCallbackFlow {
 			return { server, redirectUri };
 		} catch {
 			if (this.redirectUri) {
-				throw new AIError.ConfigurationError(
+				throw new Error(
 					`OAuth callback port ${this.preferredPort} unavailable; cannot fall back to a random port when oauth.redirectUri is set`,
 				);
 			}
@@ -144,9 +143,8 @@ export abstract class OAuthCallbackFlow {
 	 * Create HTTP server for OAuth callback.
 	 */
 	#createServer(port: number, expectedState: string): Bun.Server<unknown> {
-		const hostname = this.callbackHostname === DEFAULT_HOSTNAME ? undefined : this.callbackHostname;
 		return Bun.serve({
-			...(hostname === undefined ? {} : { hostname }),
+			hostname: this.callbackHostname,
 			port,
 			reusePort: false,
 			fetch: req => this.#handleCallback(req, expectedState),
@@ -216,7 +214,7 @@ export abstract class OAuthCallbackFlow {
 			signal.addEventListener("abort", () => {
 				this.#callbackResolve = undefined;
 				this.#callbackReject = undefined;
-				reject(new AIError.LoginCancelledError(`OAuth callback cancelled: ${signal.reason}`));
+				reject(new Error(`OAuth callback cancelled: ${signal.reason}`));
 			});
 		});
 

@@ -1,4 +1,3 @@
-import * as AIError from "../error";
 import type { FetchImpl } from "../types";
 
 type OpenAICompatibleValidationOptions = {
@@ -79,7 +78,7 @@ export async function validateOpenAICompatibleApiKey(options: OpenAICompatibleVa
 	const message = details
 		? `${options.provider} API key validation failed (${response.status}): ${details}`
 		: `${options.provider} API key validation failed (${response.status})`;
-	throw new AIError.ApiKeyRequiredError(message);
+	throw new Error(message);
 }
 
 /**
@@ -120,7 +119,7 @@ export async function validateAnthropicCompatibleApiKey(options: AnthropicCompat
 	const message = details
 		? `${options.provider} API key validation failed (${response.status}): ${details}`
 		: `${options.provider} API key validation failed (${response.status})`;
-	throw new AIError.ApiKeyRequiredError(message);
+	throw new Error(message);
 }
 
 /**
@@ -157,5 +156,5 @@ export async function validateApiKeyAgainstModelsEndpoint(options: ModelListVali
 	const message = details
 		? `${options.provider} API key validation failed (${response.status}): ${details}`
 		: `${options.provider} API key validation failed (${response.status})`;
-	throw new AIError.ApiKeyRequiredError(message);
+	throw new Error(message);
 }

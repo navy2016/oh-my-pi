@@ -11,7 +11,6 @@ import {
 import { localBackend } from "@oh-my-pi/pi-coding-agent/memory-backend/local-backend";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { LearnTool } from "@oh-my-pi/pi-coding-agent/tools/learn";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 Bun.env.PI_PYTHON_SKIP_CHECK = "1";
 
@@ -28,7 +27,7 @@ describe("learned-lesson storage (local backend)", () => {
 		learnedFile = path.join(getMemoryRoot(agentDir, projCwd), "learned.md");
 	});
 	afterEach(async () => {
-		await removeWithRetries(tmp);
+		await fs.rm(tmp, { recursive: true, force: true });
 	});
 
 	it("appends a bullet, normalizes whitespace, and inlines context", async () => {
@@ -154,7 +153,7 @@ describe("learned-lesson read-back", () => {
 		agentDir = path.join(tmp, "agent");
 	});
 	afterEach(async () => {
-		await removeWithRetries(tmp);
+		await fs.rm(tmp, { recursive: true, force: true });
 	});
 
 	it("injects lessons even when no consolidated summary exists", async () => {
@@ -229,7 +228,7 @@ describe("learn tool (local backend)", () => {
 		learnedFile = path.join(getMemoryRoot(agentDir, projCwd), "learned.md");
 	});
 	afterEach(async () => {
-		await removeWithRetries(tmp);
+		await fs.rm(tmp, { recursive: true, force: true });
 	});
 
 	function localSession(): ToolSession {

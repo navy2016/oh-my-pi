@@ -3,7 +3,6 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { HistoryStorage } from "@oh-my-pi/pi-coding-agent/session/history-storage";
-import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 let tempDir = "";
 
@@ -29,7 +28,7 @@ afterEach(async () => {
 	HistoryStorage.resetInstance();
 	vi.useRealTimers();
 	if (tempDir) {
-		await removeWithRetries(tempDir).catch(() => {});
+		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
 		tempDir = "";
 	}
 });
