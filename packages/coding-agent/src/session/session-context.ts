@@ -77,6 +77,17 @@ export interface BuildSessionContextOptions {
  * If leafId is provided, walks from that entry to root.
  * Handles compaction and branch summaries along the path.
  */
+function snapcompactHistoryBlocksForContext(
+	archive: snapcompact.Archive | undefined,
+	options: BuildSessionContextOptions | undefined,
+) {
+	if (!archive) return undefined;
+	return snapcompact.historyBlocks(
+		archive,
+		options?.transcript ? undefined : { maxFrameDataBytes: snapcompact.FRAME_DATA_BYTES_BUDGET },
+	);
+}
+
 export function buildSessionContext(
 	entries: SessionEntry[],
 	leafId?: string | null,
@@ -131,9 +142,10 @@ export function buildSessionContext(
 	const path: SessionEntry[] = [];
 	let current: SessionEntry | undefined = leaf;
 	while (current) {
-		path.unshift(current);
+		path.push(current);
 		current = current.parentId ? byId.get(current.parentId) : undefined;
 	}
+	path.reverse();
 
 	// Extract settings and find compaction
 	let thinkingLevel: string | undefined = "off";
@@ -273,7 +285,7 @@ export function buildSessionContext(
 						entry.shortSummary,
 						undefined,
 						undefined,
-						snapcompactArchive ? snapcompact.historyBlocks(snapcompactArchive) : undefined,
+						snapcompactHistoryBlocksForContext(snapcompactArchive, options),
 					),
 				);
 			} else {
@@ -307,7 +319,7 @@ export function buildSessionContext(
 				compaction.shortSummary,
 				providerPayload,
 				undefined,
-				snapcompactArchive ? snapcompact.historyBlocks(snapcompactArchive) : undefined,
+				snapcompactHistoryBlocksForContext(snapcompactArchive, options),
 			),
 		);
 
