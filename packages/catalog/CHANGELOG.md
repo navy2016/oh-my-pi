@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [16.3.11] - 2026-07-06
+
+### Added
+
+- Added Claude Haiku 4.5 (JP) model support
+- Added tencent/hy3 model support via ZenMux
+
+### Changed
+
+- Updated naming format for various synthetic models to include provider prefix
+- Adjusted context window limit for MiniMax-M3 model
+- Updated pricing for select models
+
+## [16.3.10] - 2026-07-06
+
+### Fixed
+
+- Fixed LiteLLM rich discovery to ignore unusable sentinel placeholders and continue to `/v2/model/info` for real models. ([#4655](https://github.com/can1357/oh-my-pi/issues/4655))
+
+## [16.3.9] - 2026-07-06
+
+### Fixed
+
+- Fixed compatibility with OpenCode Go DeepSeek V4 models by sending max_tokens instead of max_completion_tokens to match the provider's API requirements.
+
+## [16.3.7] - 2026-07-05
+
+### Fixed
+
+- Fixed usage cost calculation to correctly account for provider orchestration token sidecars without misclassifying them as standard input, output, or cache tokens.
+
+## [16.3.4] - 2026-07-03
+
+### Added
+
+- Added Baseten as a supported model provider
+- Added support for new models from Baseten, including DeepSeek V4 Pro and Kimi series
+- Added new Devin agent models: Claude 5 Fable variants
+- Added new Github Copilot models: Kimi K2.7 Code and MAI-Code-1-Flash
+- Added Poolside Laguna XS 2.1 models via Kilo and OpenRouter providers
+- Added support for Claude Fable 5 (Free) via Zenmux provider
+
+### Changed
+
+- Updated priority ordering to include Baseten
+- Updated pricing and limits for various existing models in the catalog
+
 ## [16.3.3] - 2026-07-02
 
 ### Fixed
