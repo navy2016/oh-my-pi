@@ -136,15 +136,16 @@ jobs:
               TARGET_PLATFORM=linux TARGET_ARCH=${TARGET_ARCH} bun scripts/embed-native.ts
               cat native/embedded-addon.js | head -20
 
-         - name: Run prepack (generate docs, tool-views, bundle dist)
+         - name: Generate compiled-binary assets
            shell: bash
-           continue-on-error: true
+           env:
+              TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
            run: |
               set -eu
-              cd packages/coding-agent
-              bun run gen:docs
-              bun run gen:tool-views
-              bun run gen:bundle
+              bun --cwd=packages/stats run gen:stats
+              bun --cwd=packages/collab-web run gen:tool-views
+              TARGET_PLATFORM=linux TARGET_ARCH=${TARGET_ARCH} bun --cwd=packages/natives run gen:native
+              bun --cwd=packages/coding-agent run gen:mupdf
 
          - name: Build omp binary (musl)
            shell: bash
@@ -152,9 +153,30 @@ jobs:
               TARGET_ARCH: ${{ steps.infer-arch.outputs.arch }}
            run: |
               set -eu
-              MUSL_TARGET="bun-linux-${TARGET_ARCH}-musl"
-              echo "Building omp for target: $MUSL_TARGET"
-              bun build                  --compile                  --target "$MUSL_TARGET"                  --no-compile-autoload-bunfig                  --no-compile-autoload-dotenv                  --no-compile-autoload-tsconfig                  --no-compile-autoload-package-json                  --keep-names                  --define "process.env.PI_COMPILED=true"                  --external fastembed                  --external onnxruntime-node                  --root .                  ./packages/coding-agent/src/cli.ts                  --outfile "omp-linux-${TARGET_ARCH}-musl"
+              cat > compile-musl.ts <<'TS'
+              import { createRequire } from "node:module";
+              import * as path from "node:path";
+              import { compileCodingAgent } from "./packages/coding-agent/scripts/compile-binary";
+
+              const repoRoot = process.cwd();
+              const requireFromRoot = createRequire(path.join(repoRoot, "package.json"));
+              const targetArch = process.env.TARGET_ARCH;
+              if (!targetArch) throw new Error("TARGET_ARCH is required");
+              const transformersManifest = requireFromRoot("@huggingface/transformers/package.json");
+              if (typeof transformersManifest.version !== "string") {
+                throw new Error("@huggingface/transformers package manifest has no string version");
+              }
+              const target = `bun-linux-${targetArch}-musl` as Bun.Build.CompileTarget;
+              console.log(`Building omp for target: ${target}`);
+              await compileCodingAgent({
+                repoRoot,
+                entrypoint: path.join(repoRoot, "packages/coding-agent/src/cli.ts"),
+                outfile: path.join(repoRoot, `omp-linux-${targetArch}-musl`),
+                transformersVersion: transformersManifest.version,
+                target,
+              });
+              TS
+              bun compile-musl.ts
 
          - name: Smoke test binary
            shell: bash
