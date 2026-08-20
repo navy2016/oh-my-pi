@@ -6,7 +6,8 @@
  * {@link ModelBrowser} body. The Roles view manages assignments directly:
  * pick a role, pick a model, adjust thinking in an inline strip, or clear the
  * role back to auto-selection. Locked providers forward to the /login flow.
- * Fully mouse-navigable (hover, wheel, click).
+ * Fully mouse-navigable (hover, wheel, click). Session-only switching lives
+ * in the compact alt+p picker ({@link ./model-picker}).
  */
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
@@ -27,15 +28,10 @@ import {
 	visibleWidth,
 } from "@oh-my-pi/pi-tui";
 import type { ModelRegistry } from "../../config/model-registry";
-import { getModelMatchPreferences, resolveModelRoleValue } from "../../config/model-resolver";
+import { type ModelRoleLookup, type ResolvedModelRoleValue, resolveModelRoleValue } from "../../config/model-resolver";
 import { getKnownRoleIds, getRoleInfo } from "../../config/model-roles";
 import type { Settings } from "../../config/settings";
-import {
-	AUTO_THINKING,
-	type ConfiguredThinkingLevel,
-	getConfiguredThinkingLevelMetadata,
-	parseConfiguredThinkingLevel,
-} from "../../thinking";
+import { AUTO_THINKING, type ConfiguredThinkingLevel, getConfiguredThinkingLevelMetadata } from "../../thinking";
 import { theme } from "../theme/theme";
 import { matchesSelectCancel, matchesSelectDown, matchesSelectUp } from "../utils/keybinding-matchers";
 import {
@@ -43,14 +39,12 @@ import {
 	ModelBrowser,
 	type ModelBrowserItem,
 	type RoleAssignments,
+	resolveRoleAssignments,
 	sortModelItems,
 	thinkingLevelGlyph,
 } from "./model-browser";
 import { bottomBorder, dividerSplit, row, splitBodyWidth, splitRow, topBorderSplit } from "./overlay-box";
 import { renderSegmentTrack } from "./segment-track";
-
-/** `roles` is the full /models hub; `pick` is a one-shot session/embedded picker. */
-export type ModelHubMode = "roles" | "pick";
 
 /**
  * A row of the Roles view: a role, a model/wildcard chain-key header, one of a
@@ -82,15 +76,21 @@ export interface ScopedModelItem {
 	thinkingLevel?: string;
 }
 
+export type ModelRoleSelectionScope = "global" | "project";
+
 export interface ModelHubCallbacks {
 	/** Persist a role assignment. */
-	onAssign: (model: Model, role: string, thinkingLevel: ConfiguredThinkingLevel | undefined, selector: string) => void;
+	onAssign: (
+		model: Model,
+		role: string,
+		thinkingLevel: ConfiguredThinkingLevel | undefined,
+		selector: string,
+		scope?: ModelRoleSelectionScope,
+	) => void;
 	/** Clear a configured role back to auto-selection. */
-	onUnassign: (role: string) => void;
+	onUnassign: (role: string, scope?: ModelRoleSelectionScope) => void;
 	/** Persist a `retry.fallbackChains` entry — keyed by a role, `provider/model-id`, or `provider/*`; an empty chain clears the key. */
 	onFallbackChainChange?: (role: string, chain: string[]) => void;
-	/** Pick-mode activation: session-only switch or embedded pick. */
-	onPick?: (model: Model, selector: string) => void;
 	/** Locked provider activation: forward to the /login flow. */
 	onLoginRequest?: (providerId: string) => void;
 	/** Persist a new quick-switch cycle order (the ctrl+p role cycle). */
@@ -99,14 +99,8 @@ export interface ModelHubCallbacks {
 }
 
 export interface ModelHubOptions {
-	mode?: ModelHubMode;
-	/** Session token count; in pick mode, models with smaller context windows are disabled. */
-	currentContextTokens?: number;
 	/** Preselect this provider's sidebar entry (e.g. when reopening after /login). */
 	initialProviderId?: string;
-	/** Status-row hint shown in pick mode. */
-	pickerHint?: string;
-	initialQuery?: string;
 }
 
 interface SidebarEntry {
@@ -126,18 +120,20 @@ interface StripChip {
 	/** Pre-styled label body (without selection decoration). */
 	styled: string;
 	role?: string;
-	action: "assign" | "unassign" | "fallback" | "fallbackModel" | "fallbackProvider" | "thinking";
+	action: "assign" | "unassign" | "fallback" | "fallbackModel" | "fallbackProvider" | "scope" | "thinking";
 	thinkingLevel?: ConfiguredThinkingLevel;
+	scope?: ModelRoleSelectionScope;
 }
 
 type StripState =
 	| {
-			kind: "role" | "thinking";
+			kind: "role" | "scope" | "thinking";
 			item: ModelBrowserItem;
 			role?: string;
+			scope?: ModelRoleSelectionScope;
 			chips: StripChip[];
 			index: number;
-			/** Where to land when a thinking strip closes. */
+			/** Where to land when a scope or thinking strip closes. */
 			returnToRoles: boolean;
 	  }
 	| {
@@ -157,8 +153,6 @@ const PROVIDER_REFRESH_DEBOUNCE_MS = 120;
 const RECENT_LIMIT = 15;
 const SIDEBAR_MIN_WIDTH = 18;
 const SIDEBAR_MAX_WIDTH = 26;
-
-const PICK_MODE_HINT = "Session-only switch — role models stay unchanged";
 
 /**
  * Providers already auto-refreshed this process. Selecting a provider fetches
@@ -182,8 +176,6 @@ export class ModelHubComponent implements Component {
 	#registry: ModelRegistry;
 	#scopedModels: ReadonlyArray<ScopedModelItem>;
 	#callbacks: ModelHubCallbacks;
-	#mode: ModelHubMode;
-	#pickerHint: string;
 
 	#browser: ModelBrowser;
 	#roles: RoleAssignments = {};
@@ -206,15 +198,19 @@ export class ModelHubComponent implements Component {
 	#sidebarFollowActive = true;
 	#sidebarHover: number | null = null;
 	/**
-	 * Arrow-key ownership: `scope` (default) hops the sidebar even while the
-	 * search bar holds the caret; `list` navigates rows (browser models or
-	 * role rows). Tab toggles.
+	 * Arrow-key ownership: `scope` (default) hops the sidebar; `list`
+	 * navigates rows (browser models or role rows). Typing anywhere focuses
+	 * the model list; Tab toggles; ←/→ switches between sidebar and list.
 	 */
 	#focus: "scope" | "list" = "scope";
 
 	#rolesRows: RolesRow[] = [];
 	#roleIndex = 0;
 	#roleHover: number | null = null;
+	/** First roles row drawn in the scroll window; follows the cursor and clamps to the list. */
+	#roleScrollStart = 0;
+	/** Roles rows actually drawn this frame; bounds mouse hit-testing to the visible window. */
+	#rolesVisibleCount = 0;
 
 	#assigning: AssignTarget | null = null;
 	#strip: StripState | null = null;
@@ -250,14 +246,9 @@ export class ModelHubComponent implements Component {
 		this.#registry = registry;
 		this.#scopedModels = scopedModels;
 		this.#callbacks = callbacks;
-		this.#mode = options.mode ?? "roles";
-		this.#pickerHint = options.pickerHint ?? PICK_MODE_HINT;
 
 		this.#browser = new ModelBrowser(settings, {
-			currentContextTokens: options.currentContextTokens,
-			disableOverContext: this.#mode === "pick",
 			emptyText: () => this.#emptyStateMessage(),
-			initialQuery: options.initialQuery,
 		});
 		this.#browser.onActivate = item => this.#activateItem(item);
 		this.#browser.onCancel = () => this.#callbacks.onCancel();
@@ -273,10 +264,6 @@ export class ModelHubComponent implements Component {
 			this.#setActiveEntry(`provider:${initialProvider}`);
 		} else {
 			this.#setActiveEntry("all");
-		}
-
-		if (this.#mode === "pick") {
-			this.#focus = "list";
 		}
 
 		// Reconcile with cached discovery state in the background. A --models
@@ -314,62 +301,10 @@ export class ModelHubComponent implements Component {
 		return getKnownRoleIds(this.#settings).filter(role => !getRoleInfo(role, this.#settings).hidden);
 	}
 
-	#getResolvedRoleThinkingLevel(
-		role: string,
-		resolved: { explicitThinkingLevel: boolean; thinkingLevel?: ConfiguredThinkingLevel },
-	): ConfiguredThinkingLevel {
-		if (resolved.explicitThinkingLevel && resolved.thinkingLevel !== undefined) {
-			return resolved.thinkingLevel;
-		}
-		if (role === "default") {
-			return parseConfiguredThinkingLevel(this.#settings.get("defaultThinkingLevel")) ?? ThinkingLevel.Inherit;
-		}
-		return ThinkingLevel.Inherit;
-	}
-
 	/** Resolve every known role: configured values first, auto-selection for the rest. */
 	#reloadRoles(autoCandidates: ReadonlyArray<Model>): void {
-		const nextRoles: RoleAssignments = {};
-		const allModels = this.#scopedModels.length > 0 ? [...autoCandidates] : this.#registry.getAll();
-		const matchPreferences = getModelMatchPreferences(this.#settings);
-		const knownRoles = getKnownRoleIds(this.#settings);
-		const configuredRoles = new Set<string>();
-
-		for (const role of knownRoles) {
-			const roleValue = this.#settings.getModelRole(role);
-			if (!roleValue) continue;
-			configuredRoles.add(role);
-			const resolved = resolveModelRoleValue(roleValue, allModels, {
-				settings: this.#settings,
-				matchPreferences,
-			});
-			if (resolved.model) {
-				nextRoles[role] = {
-					model: resolved.model,
-					thinkingLevel: this.#getResolvedRoleThinkingLevel(role, resolved),
-					autoSelected: false,
-				};
-			}
-		}
-
-		if (autoCandidates.length > 0) {
-			const candidates = [...autoCandidates];
-			for (const role of knownRoles) {
-				if (configuredRoles.has(role)) continue;
-				const resolved = resolveModelRoleValue(`pi/${role}`, candidates, {
-					settings: this.#settings,
-					matchPreferences,
-				});
-				if (!resolved.model) continue;
-				nextRoles[role] = {
-					model: resolved.model,
-					thinkingLevel: this.#getResolvedRoleThinkingLevel(role, resolved),
-					autoSelected: true,
-				};
-			}
-		}
-
-		this.#roles = nextRoles;
+		const allModels = this.#scopedModels.length > 0 ? autoCandidates : this.#registry.getAll();
+		this.#roles = resolveRoleAssignments(this.#settings, allModels, autoCandidates);
 	}
 
 	/** Rebuild items, roles, and the sidebar from the registry's in-memory state. */
@@ -461,7 +396,7 @@ export class ModelHubComponent implements Component {
 			label: providerId,
 			providerId,
 			locked: isLocked,
-			annotation: isLocked ? "login" : String(availableCounts.get(providerId) ?? 0),
+			annotation: isLocked ? undefined : String(availableCounts.get(providerId) ?? 0),
 			oauth: oauthIds.has(providerId),
 			catalogCount: catalogCounts.get(providerId) ?? 0,
 		});
@@ -475,16 +410,15 @@ export class ModelHubComponent implements Component {
 
 		// Roles leads the fixed section so downward hops from Recent head into
 		// model scopes instead of being captured by the roles view.
-		const fixed: SidebarEntry[] = [];
-		if (this.#mode === "roles") {
-			fixed.push({
+		const fixed: SidebarEntry[] = [
+			{
 				id: "roles",
 				kind: "roles",
 				label: "Roles",
 				annotation: `${assignedCount}/${visibleRoles.length}`,
-			});
-		}
-		fixed.push({ id: "all", kind: "all", label: "All models", annotation: String(availableModels.length) });
+			},
+			{ id: "all", kind: "all", label: "All models", annotation: String(availableModels.length) },
+		];
 
 		this.#fixedEntries = fixed;
 		this.#unlockedProviderEntries = [...unlocked]
@@ -635,6 +569,11 @@ export class ModelHubComponent implements Component {
 	#refreshAfterMutation(): void {
 		this.#syncFromRegistryState();
 		this.#tui.requestRender();
+	}
+
+	/** Re-sync after an asynchronous callback finishes mutating settings. */
+	refreshAfterExternalMutation(): void {
+		this.#refreshAfterMutation();
 	}
 
 	/**
@@ -811,10 +750,6 @@ export class ModelHubComponent implements Component {
 	// ═══════════════════════════════════════════════════════════════════════
 
 	#activateItem(item: ModelBrowserItem): void {
-		if (this.#mode === "pick") {
-			this.#callbacks.onPick?.(item.model, item.selector);
-			return;
-		}
 		if (this.#assigning) {
 			const target = this.#assigning;
 			this.#assigning = null;
@@ -830,23 +765,55 @@ export class ModelHubComponent implements Component {
 		this.#openRoleStrip(item);
 	}
 
+	#roleForScope(role: string, scope: ModelRoleSelectionScope): ResolvedModelRoleValue {
+		const roleValue =
+			scope === "project" ? this.#settings.getProjectModelRole(role) : this.#settings.getGlobalModelRole(role);
+		const allModels =
+			this.#scopedModels.length > 0 ? this.#scopedModels.map(scoped => scoped.model) : this.#registry.getAll();
+		const roleLookup: ModelRoleLookup = {
+			getModelRole: scopedRole =>
+				scope === "project"
+					? (this.#settings.getProjectModelRole(scopedRole) ?? this.#settings.getGlobalModelRole(scopedRole))
+					: this.#settings.getGlobalModelRole(scopedRole),
+		};
+		return resolveModelRoleValue(roleValue, allModels, { settings: this.#settings, roleLookup });
+	}
+
+	#thinkingLevelForScope(role: string, scope: ModelRoleSelectionScope): ConfiguredThinkingLevel {
+		const resolved = this.#roleForScope(role, scope);
+		return resolved.explicitThinkingLevel ? (resolved.thinkingLevel ?? ThinkingLevel.Inherit) : ThinkingLevel.Inherit;
+	}
+
 	/** Persist `role → item`, preserving a still-supported thinking level, then open the thinking strip. */
-	#assignRole(item: ModelBrowserItem, role: string, returnToRoles: boolean): void {
+	#assignRole(item: ModelBrowserItem, role: string, returnToRoles: boolean, scope?: ModelRoleSelectionScope): void {
+		if (this.#settings.get("modelRoleStorage") === "project" && scope === undefined) {
+			this.#openScopeStrip(item, role, returnToRoles);
+			return;
+		}
+
 		const current = this.#roles[role];
 		let level: ConfiguredThinkingLevel = ThinkingLevel.Inherit;
-		if (current && !current.autoSelected) {
-			const supported = this.#thinkingOptionsFor(item.model);
-			level = supported.includes(current.thinkingLevel) ? current.thinkingLevel : ThinkingLevel.Inherit;
+		if (this.#settings.get("modelRoleStorage") === "project" && scope !== undefined) {
+			level = this.#thinkingLevelForScope(role, scope);
+		} else if (current && !current.autoSelected) {
+			level = current.thinkingLevel;
 		}
-		this.#callbacks.onAssign(item.model, role, level, item.selector);
+		const supported = this.#thinkingOptionsFor(item.model);
+		if (!supported.includes(level)) level = ThinkingLevel.Inherit;
+		this.#callbacks.onAssign(item.model, role, level, item.selector, scope);
 		this.#refreshAfterMutation();
-		this.#openThinkingStrip(item, role, returnToRoles);
+		this.#openThinkingStrip(item, role, returnToRoles, scope);
 	}
 
 	#unassignRole(role: string): void {
 		const assignment = this.#roles[role];
 		if (!assignment || assignment.autoSelected) return;
-		this.#callbacks.onUnassign(role);
+		if (this.#settings.get("modelRoleStorage") === "project") {
+			const source = this.#settings.getModelRoleSource(role);
+			this.#callbacks.onUnassign(role, source === "default" ? undefined : source);
+		} else {
+			this.#callbacks.onUnassign(role);
+		}
 		this.#refreshAfterMutation();
 	}
 
@@ -856,24 +823,35 @@ export class ModelHubComponent implements Component {
 
 	#openRoleStrip(item: ModelBrowserItem): void {
 		const chips: StripChip[] = [];
+		const scopedStorage = this.#settings.get("modelRoleStorage") === "project";
+		const scopes: readonly ModelRoleSelectionScope[] = scopedStorage ? ["project", "global"] : ["global"];
 		for (const role of this.#visibleRoleIds()) {
 			const info = getRoleInfo(role, this.#settings);
 			const assignment = this.#roles[role];
-			const assignedHere =
-				!!assignment &&
-				!assignment.autoSelected &&
-				assignment.model.provider === item.model.provider &&
-				assignment.model.id === item.model.id;
-			const label = (info.tag ?? info.name ?? role).toLowerCase();
-			chips.push({
-				label,
-				styled: assignedHere
-					? theme.fg(info.color ?? "muted", `${theme.status.enabled}${label}`) +
-						theme.fg("dim", ` ${theme.status.success}`)
-					: theme.fg(info.color ?? "muted", label),
-				role,
-				action: assignedHere ? "unassign" : "assign",
-			});
+			for (const scope of scopes) {
+				const scopedModel = scopedStorage
+					? this.#roleForScope(role, scope).model
+					: assignment && !assignment.autoSelected
+						? assignment.model
+						: undefined;
+				const assignedHere =
+					!!scopedModel && scopedModel.provider === item.model.provider && scopedModel.id === item.model.id;
+				const roleLabel = (info.tag ?? info.name ?? role).toLowerCase();
+				const label = scopedStorage ? `${scope} ${roleLabel}` : roleLabel;
+				chips.push({
+					label,
+					styled: assignedHere
+						? // Separator required: under the `nerd` preset this glyph is a
+							// two-cell-wide PUA icon that `visibleWidth` counts as one, so
+							// without it the icon overhangs and eats `label`'s first char.
+							theme.fg(info.color ?? "muted", `${theme.status.enabled} ${label}`) +
+							theme.fg("dim", ` ${theme.status.success}`)
+						: theme.fg(info.color ?? "muted", label),
+					role,
+					scope,
+					action: assignedHere ? "unassign" : "assign",
+				});
+			}
 		}
 		chips.push({
 			label: `fallbacks:${item.model.id}`,
@@ -889,9 +867,25 @@ export class ModelHubComponent implements Component {
 		this.#strip = { kind: "role", item, chips, index: 0, returnToRoles: false };
 	}
 
-	#openThinkingStrip(item: ModelBrowserItem, role: string, returnToRoles: boolean): void {
+	#openScopeStrip(item: ModelBrowserItem, role: string, returnToRoles: boolean): void {
+		const chips: StripChip[] = [
+			{ label: "project", styled: theme.fg("accent", "project"), action: "scope", scope: "project" },
+			{ label: "global", styled: theme.fg("muted", "global"), action: "scope", scope: "global" },
+		];
+		this.#strip = { kind: "scope", item, role, chips, index: 0, returnToRoles };
+	}
+
+	#openThinkingStrip(
+		item: ModelBrowserItem,
+		role: string,
+		returnToRoles: boolean,
+		scope?: ModelRoleSelectionScope,
+	): void {
 		const options = this.#thinkingOptionsFor(item.model);
-		const current = this.#roles[role]?.thinkingLevel ?? ThinkingLevel.Inherit;
+		const current =
+			this.#settings.get("modelRoleStorage") === "project" && scope !== undefined
+				? this.#thinkingLevelForScope(role, scope)
+				: (this.#roles[role]?.thinkingLevel ?? ThinkingLevel.Inherit);
 		const chips: StripChip[] = options.map(level => {
 			const label = getConfiguredThinkingLevelMetadata(level).label;
 			const glyph = thinkingLevelGlyph(level);
@@ -907,6 +901,7 @@ export class ModelHubComponent implements Component {
 			kind: "thinking",
 			item,
 			role,
+			scope,
 			chips,
 			index: preselect >= 0 ? preselect : 0,
 			returnToRoles,
@@ -917,7 +912,7 @@ export class ModelHubComponent implements Component {
 		const strip = this.#strip;
 		this.#strip = null;
 		this.#chipRanges = [];
-		if (strip?.kind === "thinking" && strip.returnToRoles && this.#mode === "roles") {
+		if ((strip?.kind === "scope" || strip?.kind === "thinking") && strip.returnToRoles) {
 			this.#setActiveEntry("roles");
 			this.#focus = "list";
 		}
@@ -932,12 +927,16 @@ export class ModelHubComponent implements Component {
 			case "assign":
 				if (chip.role) {
 					this.#strip = null;
-					this.#assignRole(strip.item, chip.role, false);
+					this.#assignRole(strip.item, chip.role, false, chip.scope);
 				}
 				return;
 			case "unassign":
 				if (chip.role) {
-					this.#callbacks.onUnassign(chip.role);
+					if (this.#settings.get("modelRoleStorage") === "project") {
+						this.#callbacks.onUnassign(chip.role, chip.scope);
+					} else {
+						this.#callbacks.onUnassign(chip.role);
+					}
 					this.#refreshAfterMutation();
 				}
 				this.#closeStrip();
@@ -954,9 +953,21 @@ export class ModelHubComponent implements Component {
 				this.#closeStrip();
 				this.#startAssignFallback(`${strip.item.model.provider}/*`, null);
 				return;
+			case "scope":
+				if (strip.role && chip.scope) {
+					this.#strip = null;
+					this.#assignRole(strip.item, strip.role, strip.returnToRoles, chip.scope);
+				}
+				return;
 			case "thinking":
 				if (strip.role && chip.thinkingLevel !== undefined) {
-					this.#callbacks.onAssign(strip.item.model, strip.role, chip.thinkingLevel, strip.item.selector);
+					this.#callbacks.onAssign(
+						strip.item.model,
+						strip.role,
+						chip.thinkingLevel,
+						strip.item.selector,
+						strip.scope,
+					);
 					this.#refreshAfterMutation();
 				}
 				this.#closeStrip();
@@ -1030,14 +1041,12 @@ export class ModelHubComponent implements Component {
 		}
 		this.#setFallbackChain(target.role, chain);
 		this.#browser.setQuery("");
-		if (this.#mode === "roles") {
-			this.#setActiveEntry("roles");
-			this.#focus = "list";
-			const rowIndex = this.#rolesRows.findIndex(
-				row => row.kind === "fallback" && row.role === target.role && row.selector === selector,
-			);
-			if (rowIndex >= 0) this.#roleIndex = rowIndex;
-		}
+		this.#setActiveEntry("roles");
+		this.#focus = "list";
+		const rowIndex = this.#rolesRows.findIndex(
+			row => row.kind === "fallback" && row.role === target.role && row.selector === selector,
+		);
+		if (rowIndex >= 0) this.#roleIndex = rowIndex;
 	}
 
 	/** Persist `role`'s chain through the host callback and rebuild dependent state. */
@@ -1076,10 +1085,8 @@ export class ModelHubComponent implements Component {
 	#cancelAssign(): void {
 		this.#assigning = null;
 		this.#browser.setQuery("");
-		if (this.#mode === "roles") {
-			this.#setActiveEntry("roles");
-			this.#focus = "list";
-		}
+		this.#setActiveEntry("roles");
+		this.#focus = "list";
 	}
 
 	// ═══════════════════════════════════════════════════════════════════════
@@ -1193,8 +1200,7 @@ export class ModelHubComponent implements Component {
 			return;
 		}
 
-		// Arrow ownership: scope mode hops the sidebar even while the search
-		// bar holds the caret; list mode navigates rows.
+		// Arrow ownership: scope mode hops the sidebar; list mode navigates rows.
 		if (this.#focus === "scope") {
 			if (matchesSelectUp(data)) {
 				this.#moveSidebar(-1);
@@ -1207,16 +1213,36 @@ export class ModelHubComponent implements Component {
 		}
 
 		if (rolesView) {
+			const printable = extractPrintableText(data);
+			if (this.#focus === "scope" && printable !== undefined && printable.trim().length > 0) {
+				this.#setActiveEntry("all");
+				this.#focus = "list";
+				this.#browser.handleInput(data);
+				return;
+			}
 			this.#handleRolesViewInput(data);
 			return;
 		}
 		if (lockedView) {
+			const printable = extractPrintableText(data);
+			if (printable !== undefined && printable.trim().length > 0) {
+				this.#setActiveEntry("all");
+				this.#focus = "list";
+				this.#browser.handleInput(data);
+				return;
+			}
 			if (matchesKey(data, "enter") || matchesKey(data, "return") || data === "\n") {
 				this.#requestLogin(entry);
 			}
 			return;
 		}
+
+		const beforeQuery = this.#browser.query;
+		const isPrintable = extractPrintableText(data) !== undefined;
 		this.#browser.handleInput(data);
+		if (isPrintable || this.#browser.query !== beforeQuery) {
+			this.#focus = "list";
+		}
 	}
 
 	#isBrowserView(entry: SidebarEntry): boolean {
@@ -1297,6 +1323,15 @@ export class ModelHubComponent implements Component {
 			case "separator":
 				return;
 		}
+	}
+
+	/** Scroll `#roleScrollStart` just enough to keep `#roleIndex` inside a window of `viewHeight` rows, clamped to the list. */
+	#ensureRoleVisible(viewHeight: number, total: number): number {
+		if (viewHeight <= 0) return 0;
+		let start = this.#roleScrollStart;
+		if (this.#roleIndex < start) start = this.#roleIndex;
+		else if (this.#roleIndex >= start + viewHeight) start = this.#roleIndex - viewHeight + 1;
+		return Math.max(0, Math.min(start, Math.max(0, total - viewHeight)));
 	}
 
 	/** Step the roles cursor by one row, skipping separator rows. Wraps at the ends unless `wrap: false` (then the cursor stays put). */
@@ -1394,13 +1429,20 @@ export class ModelHubComponent implements Component {
 		if (printable === "t") {
 			const assignment = role ? this.#roles[role] : undefined;
 			if (role && assignment) {
+				const source =
+					this.#settings.get("modelRoleStorage") === "project"
+						? this.#settings.getModelRoleSource(role)
+						: "default";
+				const scope = source === "project" || source === "global" ? source : undefined;
+				const scopedModel = scope ? this.#roleForScope(role, scope).model : assignment.model;
+				if (!scopedModel) return;
 				const item: ModelBrowserItem = {
-					provider: assignment.model.provider,
-					id: assignment.model.id,
-					model: assignment.model,
-					selector: `${assignment.model.provider}/${assignment.model.id}`,
+					provider: scopedModel.provider,
+					id: scopedModel.id,
+					model: scopedModel,
+					selector: `${scopedModel.provider}/${scopedModel.id}`,
 				};
-				this.#openThinkingStrip(item, role, true);
+				this.#openThinkingStrip(item, role, true, scope);
 			}
 			return;
 		}
@@ -1463,11 +1505,16 @@ export class ModelHubComponent implements Component {
 			this.#sidebarHover = overSidebar ? this.#sidebarEntryIndexAt(contentLine) : null;
 			if (overBody && entry.kind === "roles" && this.#assigning === null) {
 				const roleLine = bodyLine - this.#rolesRowStart;
-				this.#roleHover = roleLine >= 0 && roleLine < this.#rolesRowCount ? roleLine : null;
+				this.#roleHover =
+					roleLine >= 0 && roleLine < this.#rolesVisibleCount ? roleLine + this.#roleScrollStart : null;
 			} else {
 				this.#roleHover = null;
 				if (overBody && this.#isBrowserView(entry)) {
 					this.#browser.routeMouse(event, bodyLine);
+				} else {
+					// Pointer left the browser pane: without this, the last
+					// hovered row keeps its band while the sidebar hovers too.
+					this.#browser.clearHover();
 				}
 			}
 			return true;
@@ -1494,8 +1541,9 @@ export class ModelHubComponent implements Component {
 		if (overBody) {
 			if (entry.kind === "roles" && this.#assigning === null) {
 				this.#focus = "list";
-				const roleLine = bodyLine - this.#rolesRowStart;
-				if (roleLine >= 0 && roleLine < this.#rolesRowCount) {
+				const listLine = bodyLine - this.#rolesRowStart;
+				if (listLine >= 0 && listLine < this.#rolesVisibleCount) {
+					const roleLine = listLine + this.#roleScrollStart;
 					const rowDef = this.#rolesRows[roleLine];
 					if (rowDef && rowDef.kind !== "separator") {
 						if (roleLine === this.#roleIndex) {
@@ -1578,11 +1626,10 @@ export class ModelHubComponent implements Component {
 			// While searching, entries the hop skips gray out: locked and
 			// zero-match providers, an empty Recent, and the Roles view.
 			const muted = entry.locked || matchCount === 0 || (searching && entry.kind === "roles");
-			const cursor = active
-				? this.#focus === "scope"
-					? theme.fg("accent", theme.nav.cursor)
-					: theme.fg("dim", theme.nav.cursor)
-				: " ";
+			// The sidebar's active entry is state, not a cursor: accent label
+			// plus a cursor glyph while the sidebar owns the arrows. The band
+			// stays in the body pane so the two never look alike.
+			const cursor = active && this.#focus === "scope" ? theme.fg("accent", theme.nav.cursor) : " ";
 
 			let icon: string;
 			if (entry.kind === "recent") {
@@ -1597,7 +1644,7 @@ export class ModelHubComponent implements Component {
 			const labelStyled = muted
 				? theme.fg("dim", entry.label)
 				: active
-					? theme.fg("accent", entry.label)
+					? theme.bold(theme.fg("accent", entry.label))
 					: entry.label;
 
 			const refreshing = entry.providerId ? this.#refreshingProviders.has(entry.providerId) : false;
@@ -1614,8 +1661,10 @@ export class ModelHubComponent implements Component {
 				line = `${left}${" ".repeat(width - leftWidth - annWidth)}${annotationStyled}`;
 			} else {
 				line = truncateToWidth(left, width);
+				const lineWidth = visibleWidth(line);
+				if (lineWidth < width) line += " ".repeat(width - lineWidth);
 			}
-			if (hovered && !active) {
+			if (hovered) {
 				line = theme.bg("selectedBg", line);
 			}
 			lines.push(line);
@@ -1650,7 +1699,7 @@ export class ModelHubComponent implements Component {
 		let text: string;
 		switch (entry.kind) {
 			case "recent":
-				text = this.#mode === "pick" ? this.#pickerHint : `Recently used models${scopedSuffix}`;
+				text = `Recently used models${scopedSuffix}`;
 				break;
 			case "roles":
 				text = "Model roles — f adds a retry fallback, cleared roles fall back to auto-selection";
@@ -1665,7 +1714,7 @@ export class ModelHubComponent implements Component {
 				}
 				break;
 			default:
-				text = this.#mode === "pick" ? this.#pickerHint : `All available models${scopedSuffix}`;
+				text = `All available models${scopedSuffix}`;
 				break;
 		}
 		if (this.#configError && entry.kind !== "provider") {
@@ -1673,6 +1722,17 @@ export class ModelHubComponent implements Component {
 			return truncateToWidth(theme.fg("error", ` ${text}`), width);
 		}
 		return truncateToWidth(theme.fg("muted", ` ${text}`), width);
+	}
+
+	/** Clamp a roles row to `width`; the bg band is reserved for mouse hover. */
+	#finishRolesRow(line: string, width: number, hovered: boolean): string {
+		let out = truncateToWidth(line, width);
+		if (hovered) {
+			const w = visibleWidth(out);
+			if (w < width) out += " ".repeat(width - w);
+			return theme.bg("selectedBg", out);
+		}
+		return out;
 	}
 
 	#renderRolesView(width: number, rows: number): string[] {
@@ -1691,12 +1751,23 @@ export class ModelHubComponent implements Component {
 		}
 
 		const cycleOrder = this.#cycleOrder();
-		for (let i = 0; i < this.#rolesRows.length && lines.length < rows - 2; i++) {
+		const listFocused = this.#focus === "list";
+		// Window the list around the cursor so entries past the panel height stay
+		// reachable; the trailing indicator line steals one row when clipped.
+		const total = this.#rolesRows.length;
+		const capacity = Math.max(0, rows - 2 - this.#rolesRowStart);
+		const overflow = total > capacity;
+		const viewHeight = overflow ? Math.max(0, capacity - 1) : capacity;
+		this.#roleScrollStart = this.#ensureRoleVisible(viewHeight, total);
+		const endIndex = Math.min(this.#roleScrollStart + viewHeight, total);
+		this.#rolesVisibleCount = Math.max(0, endIndex - this.#roleScrollStart);
+		for (let i = this.#roleScrollStart; i < endIndex; i++) {
 			const rowDef = this.#rolesRows[i];
 			if (!rowDef) continue;
 			const selected = i === this.#roleIndex;
 			const hovered = i === this.#roleHover;
-			const cursor = selected ? theme.fg("accent", theme.nav.cursor) : " ";
+			// The unfocused pane draws no cursor; accent text still marks the row.
+			const cursor = selected && listFocused ? theme.fg("accent", theme.nav.cursor) : " ";
 
 			if (rowDef.kind === "separator") {
 				lines.push(`   ${theme.fg("border", "─".repeat(Math.max(1, width - 6)))}`);
@@ -1706,10 +1777,7 @@ export class ModelHubComponent implements Component {
 			if (rowDef.kind === "newRole" || rowDef.kind === "newFallback") {
 				const label = rowDef.kind === "newRole" ? "+ New role…" : "+ New fallback…";
 				let line = ` ${cursor} ${theme.fg(selected ? "accent" : "dim", label)}`;
-				line = truncateToWidth(line, width);
-				if (hovered && !selected) {
-					line = theme.bg("selectedBg", line);
-				}
+				line = this.#finishRolesRow(line, width, hovered);
 				lines.push(line);
 				continue;
 			}
@@ -1720,10 +1788,7 @@ export class ModelHubComponent implements Component {
 				const tail = key.slice(slash + 1);
 				const keyStyled = theme.fg("dim", key.slice(0, slash + 1)) + (selected ? theme.fg("accent", tail) : tail);
 				let line = ` ${cursor} ${theme.fg("dim", theme.status.shadowed)} ${keyStyled}`;
-				line = truncateToWidth(line, width);
-				if (hovered && !selected) {
-					line = theme.bg("selectedBg", line);
-				}
+				line = this.#finishRolesRow(line, width, hovered);
 				lines.push(line);
 				continue;
 			}
@@ -1732,10 +1797,7 @@ export class ModelHubComponent implements Component {
 				const branch = theme.fg("dim", `${"".padEnd(tagWidth + 3)}↳`);
 				const selector = selected ? theme.fg("accent", rowDef.selector) : theme.fg("muted", rowDef.selector);
 				let line = ` ${cursor} ${branch} ${selector}`;
-				line = truncateToWidth(line, width);
-				if (hovered && !selected) {
-					line = theme.bg("selectedBg", line);
-				}
+				line = this.#finishRolesRow(line, width, hovered);
 				lines.push(line);
 				continue;
 			}
@@ -1778,13 +1840,18 @@ export class ModelHubComponent implements Component {
 			const lineWidth = visibleWidth(line);
 			if (rightWidth > 0 && lineWidth + rightWidth + 2 <= width) {
 				line = `${line}${" ".repeat(width - lineWidth - rightWidth - 1)}${right}`;
-			} else {
-				line = truncateToWidth(line, width);
 			}
-			if (hovered && !selected) {
-				line = theme.bg("selectedBg", line);
-			}
+			line = this.#finishRolesRow(line, width, hovered);
 			lines.push(line);
+		}
+
+		if (overflow) {
+			const hiddenAbove = this.#roleScrollStart;
+			const hiddenBelow = total - endIndex;
+			const parts: string[] = [];
+			if (hiddenAbove > 0) parts.push(`↑ ${hiddenAbove} more`);
+			if (hiddenBelow > 0) parts.push(`↓ ${hiddenBelow} more`);
+			lines.push(truncateToWidth(theme.fg("dim", `   ${parts.join("   ")}`), width));
 		}
 
 		// Live preview of the quick-switch cycle, rendered with the exact
@@ -1854,9 +1921,9 @@ export class ModelHubComponent implements Component {
 			if (strip.kind === "roleName") {
 				return "Enter create + pick model · Esc cancel";
 			}
-			return strip.kind === "role"
-				? "←/→ choose · Enter assign/clear · Esc cancel"
-				: "←/→ thinking level · Enter apply · Esc keep";
+			if (strip.kind === "role") return "←/→ choose · Enter assign/clear · Esc cancel";
+			if (strip.kind === "scope") return "←/→ save scope · Enter choose · Esc cancel";
+			return "←/→ thinking level · Enter apply · Esc keep";
 		}
 		if (this.#assigning !== null) {
 			switch (this.#assigning.kind) {
@@ -1890,9 +1957,6 @@ export class ModelHubComponent implements Component {
 		}
 		const arrows = this.#focus === "scope" ? "↑/↓ providers · → models" : "↑/↓ models · ← providers";
 		const refresh = entry.kind === "provider" ? " · F5 refresh" : "";
-		if (this.#mode === "pick") {
-			return `Enter use for this session · ${arrows} · type to search${refresh} · Esc close`;
-		}
 		return `Enter assign roles · ${arrows} · type to search${refresh} · Esc close`;
 	}
 
@@ -1981,14 +2045,14 @@ export class ModelHubComponent implements Component {
 			bodyLines.push(...this.#renderLockedView(entry, bodyWidth, contentRows - 1));
 		} else {
 			this.#browser.setMaxVisible(contentRows - 1 - 5);
+			this.#browser.setFocused(this.#focus === "list");
 			bodyLines.push(...this.#browser.render(bodyWidth));
 		}
 
 		const sidebarLines = this.#renderSidebar(sidebarWidth, contentRows);
 
-		const title = this.#mode === "pick" ? "Switch Model" : "Models";
 		const out: string[] = [];
-		out.push(topBorderSplit(width, title, sidebarWidth));
+		out.push(topBorderSplit(width, "Models", sidebarWidth));
 		this.#contentRowStart = out.length;
 		for (let i = 0; i < contentRows; i++) {
 			out.push(splitRow(sidebarLines[i] ?? "", bodyLines[i] ?? "", width, sidebarWidth));

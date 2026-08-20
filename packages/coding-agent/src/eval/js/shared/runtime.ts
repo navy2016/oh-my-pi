@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { Writable } from "node:stream";
 import * as util from "node:util";
 
-import { logger } from "@oh-my-pi/pi-utils";
+import * as logger from "@oh-my-pi/pi-utils/logger";
 
 import { createHelpers, type HelperBundle } from "./helpers";
 import { awaitMaybePromise, indirectEval } from "./indirect-eval";
@@ -23,6 +23,29 @@ export interface RuntimeHooks {
 	onText(chunk: string): void;
 	onDisplay(output: JsDisplayOutput): void;
 	callTool(name: string, args: unknown): Promise<unknown>;
+}
+
+/**
+ * Bridged tool results carry image blocks as a base64 `images` array that no
+ * cell code consumes. Emit each block as an image display output so the model
+ * receives real image content — matching the direct tool path — and replace
+ * the payload with a note so echoing the result cannot flood the transcript
+ * with base64.
+ */
+function surfaceBridgedToolImages(value: unknown, hooks: RuntimeHooks): unknown {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+	const { images, ...rest } = value as { images?: unknown } & Record<string, unknown>;
+	if (!Array.isArray(images) || images.length === 0) return value;
+	let displayed = 0;
+	for (const image of images) {
+		if (!image || typeof image !== "object") continue;
+		const { data, mimeType } = image as { data?: unknown; mimeType?: unknown };
+		if (typeof data !== "string" || typeof mimeType !== "string") continue;
+		hooks.onDisplay({ type: "image", data, mimeType });
+		displayed++;
+	}
+	if (displayed === 0) return value;
+	return { ...rest, images: `(${displayed} image${displayed === 1 ? "" : "s"} displayed)` };
 }
 
 export interface RunContext {
@@ -340,7 +363,7 @@ export class JsRuntime {
 			__omp_call_tool__: async (name: string, args: unknown) => {
 				const hooks = this.#activeHooks("tool");
 				if (!hooks) return undefined;
-				return await hooks.callTool(name, args);
+				return surfaceBridgedToolImages(await hooks.callTool(name, args), hooks);
 			},
 			__omp_import__: async (source: string, options?: ImportCallOptions) => {
 				const resolved = await this.#moduleLoader.resolveForRun(this.#activeCwd(), source);

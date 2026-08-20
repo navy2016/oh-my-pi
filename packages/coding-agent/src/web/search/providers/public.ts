@@ -11,15 +11,13 @@ import { withHardTimeout } from "./utils";
  * Credential-free engines the Public Web aggregate fans out to. Order is the
  * tiebreak for merged ranking (earlier engines win equal consensus/rank), so
  * engines with the best ranking quality when they answer come first:
- * Google-index engines (startpage, google) lead, Bing-backed scrapers follow,
- * and Mojeek's independent index breaks remaining ties (measured 2026-07).
+ * Google-index engines (startpage, google) lead, and Mojeek's independent
+ * index breaks remaining ties (measured 2026-07).
  */
 const PUBLIC_ENGINE_IDS = [
 	"startpage",
 	"google",
 	"duckduckgo",
-	"bing",
-	"yahoo",
 	"ecosia",
 	"mojeek",
 ] as const satisfies readonly SearchProviderId[];
@@ -132,7 +130,7 @@ export async function searchPublicWeb(
 	// hard deadline; the straggler controller lets the aggregate cancel
 	// still-running engines once it decides to return.
 	const straggler = new AbortController();
-	const signal = AbortSignal.any([withHardTimeout(params.signal), straggler.signal]);
+	const signal = AbortSignal.any([withHardTimeout(params.signal, params.timeoutMs), straggler.signal]);
 
 	const responses: (SearchResponse | undefined)[] = new Array(engineIds.length);
 	const failures: { provider: { id: SearchProviderId; label: string }; error: unknown }[] = [];
@@ -191,7 +189,7 @@ export class PublicWebProvider extends SearchProvider {
 		return false;
 	}
 
-	isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
+	override isExplicitlyAvailable(_authStorage: AuthStorage): boolean {
 		return true;
 	}
 

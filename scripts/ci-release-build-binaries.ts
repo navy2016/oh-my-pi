@@ -26,9 +26,7 @@ if (
 	throw new Error("@huggingface/transformers package manifest has no string version");
 }
 const transformersVersion = transformersManifest.version;
-// Worker threads re-enter the binary's CLI entry module. Legacy Pi host
-// modules are supplied by the in-memory compile plugin, so neither subsystem
-// needs extra `--compile` entrypoints.
+// Worker threads re-enter the binary's single CLI host entry.
 const isDryRun = process.argv.includes("--dry-run");
 const targets: BinaryTarget[] = [
 	{
@@ -58,6 +56,20 @@ const targets: BinaryTarget[] = [
 		arch: "arm64",
 		target: "bun-linux-arm64",
 		outfile: "packages/coding-agent/binaries/omp-linux-arm64",
+	},
+	{
+		id: "linux-musl-x64",
+		platform: "linux",
+		arch: "x64",
+		target: "bun-linux-x64-musl-baseline",
+		outfile: "packages/coding-agent/binaries/omp-linux-musl-x64",
+	},
+	{
+		id: "linux-musl-arm64",
+		platform: "linux",
+		arch: "arm64",
+		target: "bun-linux-arm64-musl",
+		outfile: "packages/coding-agent/binaries/omp-linux-musl-arm64",
 	},
 	{
 		id: "win32-x64",
@@ -146,24 +158,20 @@ async function generateBundle(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun run gen:stats");
 		console.log("DRY RUN bun --cwd=packages/collab-web run gen:tool-views");
-		console.log("DRY RUN bun run gen:mupdf");
 		return;
 	}
 	await runCommand(["bun", "run", "gen:stats"], repoRoot);
 	await runCommand(["bun", "--cwd=packages/collab-web", "run", "gen:tool-views"], repoRoot);
-	await runCommand(["bun", "run", "gen:mupdf"], repoRoot);
 }
 
 async function resetArtifacts(): Promise<void> {
 	if (isDryRun) {
 		console.log("DRY RUN bun run gen:native:reset");
 		console.log("DRY RUN bun run gen:stats:reset");
-		console.log("DRY RUN bun run gen:mupdf:reset");
 		return;
 	}
 	await runCommand(["bun", "run", "gen:native:reset"], repoRoot);
 	await runCommand(["bun", "run", "gen:stats:reset"], repoRoot);
-	await runCommand(["bun", "run", "gen:mupdf:reset"], repoRoot);
 }
 
 async function main(): Promise<void> {
